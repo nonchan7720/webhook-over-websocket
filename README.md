@@ -4,6 +4,8 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/nonchan7720/webhook-over-websocket)](go.mod)
 [![License](https://img.shields.io/github/license/nonchan7720/webhook-over-websocket)](LICENSE)
 
+[日本語](README_ja.md)
+
 A tunnel tool that forwards external webhook requests to a local development server via WebSocket.
 
 ## Overview
