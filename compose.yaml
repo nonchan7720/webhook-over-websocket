@@ -1,0 +1,18 @@
+services:
+  dev:
+    image: webhook-overt-ws-dev
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ./:/src/
+      - ~/.gitconfig:/.gitconfig
+      - ~/.ssh/:/.ssh/
+      - vscode_extension:/home/user/.vscode-server/extensions
+    tty: true
+    networks:
+      - default
+volumes:
+  vscode_extension:
+networks:
+  default:
