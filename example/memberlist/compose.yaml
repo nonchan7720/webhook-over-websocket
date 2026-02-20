@@ -8,5 +8,20 @@ services:
       - server
       - --peer-domain
       - service
+      - --cleanup-duration
+      - 1m
+      - --log-level
+      - INFO
     deploy:
       replicas: 3
+  traefik:
+    image: traefik:v3.6.8
+    command:
+      - --configFile
+      - /etc/traefik/config/static.yaml
+    ports:
+      - 18081:18080
+      - 18082:8080
+    volumes:
+      - ./traefik/static.yaml:/etc/traefik/config/static.yaml
+      - ./traefik/dynamic/:/etc/traefik/config/dynamic/

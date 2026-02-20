@@ -24,6 +24,7 @@ import (
 	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/middlewares"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/traefik"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -46,19 +47,53 @@ type serverArgs struct {
 	cleanupDuration        time.Duration
 	memberListPort         int
 	memberlistSyncDuration time.Duration
+
+	logLevel  string
+	logFormat string
 }
 
 func serverCommand() *cobra.Command {
 	var args serverArgs
 	cmd := &cobra.Command{
 		Use: "server",
-		PreRun: func(cmd *cobra.Command, args []string) {
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			myIP = getLocalIP()
 			activeChannels = make(map[string]*ClientConn)
 			pendingRequests = make(map[string]chan []byte)
 			upgrader = websocket.Upgrader{
 				CheckOrigin: func(r *http.Request) bool { return true },
 			}
+			level, err := utils.ParseLevel(args.logLevel)
+			if err != nil {
+				return err
+			}
+			var slogHandler slog.Handler
+			switch strings.ToLower(args.logFormat) {
+			case "json":
+				slogHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+					Level:     level.Level(),
+					AddSource: true,
+					ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+						if a.Key == "time" { //nolint
+							return slog.String(a.Key, time.Now().Format(time.RFC3339))
+						}
+						return a
+					},
+				})
+			default:
+				slogHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+					Level:     level.Level(),
+					AddSource: true,
+					ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+						if a.Key == "time" { //nolint
+							return slog.String(a.Key, time.Now().Format(time.RFC3339))
+						}
+						return a
+					},
+				})
+			}
+			slog.SetDefault(slog.New(slogHandler))
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeServer(cmd.Context(), &args)
@@ -70,6 +105,8 @@ func serverCommand() *cobra.Command {
 	flag.DurationVar(&args.cleanupDuration, "cleanup-duration", 5*time.Minute, "channel_id cleanup duration")
 	flag.IntVar(&args.memberListPort, "memberlist-port", 7946, "memberlist port(gossip protocol)")
 	flag.DurationVar(&args.memberlistSyncDuration, "memberlist-sync-duration", 5*time.Second, "channel_id cleanup duration")
+	flag.StringVar(&args.logLevel, "log-level", "INFO", "log level")
+	flag.StringVar(&args.logFormat, "log-format", "text", "log format")
 	return cmd
 }
 
@@ -110,7 +147,16 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 		_, _ = w.Write([]byte(`{"status":"OK"}`)) //nolint:errcheck
 	})
 	skipper := func(r *http.Request) bool {
-		return r.URL.Path == "/healthz"
+		switch r.URL.Path {
+		case "/healthz":
+			fallthrough
+		case "/traefik-config":
+			fallthrough
+		case "/internal/channels":
+			return true
+		default:
+			return false
+		}
 	}
 	srv := http.Server{
 		Handler:           middlewares.Logging(skipper)(mux),

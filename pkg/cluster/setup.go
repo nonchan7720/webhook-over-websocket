@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ func Config(port int, myIP string) *memberlist.Config {
 	if myIP != localhost {
 		mConfig.BindAddr = myIP
 	}
+	mConfig.Logger = log.New(&slogWriter{}, "", log.LstdFlags)
 	return mConfig
 }
 
