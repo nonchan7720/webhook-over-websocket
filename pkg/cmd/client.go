@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,8 @@ import (
 type clientArgs struct {
 	serverURL string
 	targetURL string
+
+	insecure bool
 }
 
 func clientCommand() *cobra.Command {
@@ -30,6 +33,17 @@ func clientCommand() *cobra.Command {
 		Use:           "client",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		PreRun: func(cmd *cobra.Command, _ []string) {
+			if args.insecure {
+				tlsConfig := &tls.Config{
+					InsecureSkipVerify: true, //nolint: gosec
+				}
+				transport := http.DefaultTransport.(*http.Transport).Clone() // nolint: errcheck,forcetypeassert
+				transport.TLSClientConfig = tlsConfig
+				http.DefaultClient.Transport = transport
+				websocket.DefaultDialer.TLSClientConfig = tlsConfig
+			}
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeClient(cmd.Context(), &args)
 		},
@@ -37,6 +51,7 @@ func clientCommand() *cobra.Command {
 	flag := cmd.Flags()
 	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
 	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
+	flag.BoolVar(&args.insecure, "insecure", false, "insecure skip verify")
 	_ = cmd.MarkFlagRequired("server-url") //nolint: errcheck
 	return cmd
 }
@@ -59,10 +74,18 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		return fmt.Errorf("failed to retrieve channel_id: %w", err)
 	}
 
-	fmt.Printf("Issued Channel ID: %s", channelID)
-	fmt.Printf("Please set the webhook destination as follows: %s/webhook/%s", args.serverURL, channelID)
+	fmt.Printf("Issued Channel ID: %s\n", channelID)
+	fmt.Printf("Please set the webhook destination as follows: %s/webhook/%s\n", args.serverURL, channelID)
 
 	// 2. サーバーにWebSocketで接続
+	dialer := websocket.DefaultDialer
+	if args.insecure {
+		tls := &tls.Config{
+			InsecureSkipVerify: true,                 //nolint: gosec
+			NextProtos:         []string{"http/1.1"}, // h2 を含めない
+		}
+		dialer.TLSClientConfig = tls
+	}
 	wsURL := fmt.Sprintf("%s://%s/ws/%s", websocketScheme, u.Host, channelID)
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
