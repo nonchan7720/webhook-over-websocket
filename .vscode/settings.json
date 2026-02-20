@@ -1,0 +1,14 @@
+{
+  "go.lintTool": "golangci-lint",
+  "go.formatTool": "custom",
+  "go.alternateTools": {
+    "customFormatter": "golangci-lint"
+  },
+  "go.formatFlags": [
+    "fmt",
+    "--stdin",
+  ],
+  "cSpell.words": [
+    "golangci"
+  ]
+}

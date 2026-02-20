@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -37,7 +37,7 @@ func clientCommand() *cobra.Command {
 	flag := cmd.Flags()
 	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
 	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
-	_ = cmd.MarkFlagRequired("server-url")
+	_ = cmd.MarkFlagRequired("server-url") //nolint: errcheck
 	return cmd
 }
 
@@ -59,8 +59,8 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		return fmt.Errorf("failed to retrieve channel_id: %w", err)
 	}
 
-	log.Printf("Issued Channel ID: %s", channelID)
-	log.Printf("Please set the webhook destination as follows: %s/webhook/%s", args.serverURL, channelID)
+	fmt.Printf("Issued Channel ID: %s", channelID)
+	fmt.Printf("Please set the webhook destination as follows: %s/webhook/%s", args.serverURL, channelID)
 
 	// 2. サーバーにWebSocketで接続
 	wsURL := fmt.Sprintf("%s://%s/ws/%s", websocketScheme, u.Host, channelID)
@@ -69,14 +69,14 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		return fmt.Errorf("WebSocket connection failed: %w", err)
 	}
 	defer conn.Close() //nolint: errcheck
-	fmt.Println("A tunnel to the server has been established.")
+	slog.Info("A tunnel to the server has been established.")
 
 	var wsMutex sync.Mutex
 
 	// contextキャンセル時にWebSocketを閉じる
 	go func() {
 		<-ctx.Done()
-		log.Println("Shutting down client...")
+		slog.Info("Shutting down client...")
 		_ = conn.Close() //nolint: errcheck
 	}()
 
@@ -84,7 +84,7 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Context cancelled, exiting...")
+			slog.Info("Context cancelled, exiting...")
 			return ctx.Err()
 		default:
 		}
@@ -94,10 +94,10 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				log.Println("Context cancelled during read")
+				slog.Info("Context cancelled during read")
 				return ctx.Err()
 			default:
-				fmt.Println("WebSocket Disconnection:", err)
+				slog.Error(fmt.Sprintf("WebSocket Disconnection: %v", err))
 				return err
 			}
 		}
@@ -124,13 +124,13 @@ func getNewChannel(serverURL string) (string, error) {
 
 // handleHTTPRequest は受信したバイト列を復元し、ローカルへ送信、結果を返却します
 func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket.Conn, wsMutex *sync.Mutex, targetURL string) {
-	log.Printf("[ReqID: %s] Webhookを受信、ローカルへ転送します...", msg.ReqID)
+	slog.Info(fmt.Sprintf("[ReqID: %s] Webhookを受信、ローカルへ転送します...", msg.ReqID))
 
 	// 1. 生のバイト列を http.Request に復元
 	reqReader := bufio.NewReader(bytes.NewReader(msg.Payload))
 	req, err := http.ReadRequest(reqReader)
 	if err != nil {
-		log.Printf("[ReqID: %s] リクエスト復元エラー: %v", msg.ReqID, err)
+		slog.Error(fmt.Sprintf("[ReqID: %s] リクエスト復元エラー: %v", msg.ReqID, err))
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
@@ -139,7 +139,7 @@ func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket
 	req.RequestURI = "" // クライアントとして送信する場合は空にする必要がある
 	target, err := url.Parse(targetURL)
 	if err != nil {
-		log.Printf("[ReqID: %s] ターゲットURL解析エラー: %v", msg.ReqID, err)
+		slog.Error(fmt.Sprintf("[ReqID: %s] ターゲットURL解析エラー: %v", msg.ReqID, err))
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
@@ -153,7 +153,7 @@ func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[ReqID: %s] ローカルサーバーへの送信エラー: %v", msg.ReqID, err)
+		slog.Error(fmt.Sprintf("[ReqID: %s] ローカルサーバーへの送信エラー: %v", msg.ReqID, err))
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
@@ -162,7 +162,7 @@ func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket
 	// 4. 受け取ったレスポンスを生のバイト列にダンプ
 	rawRespBytes, err := httputil.DumpResponse(resp, true)
 	if err != nil {
-		log.Printf("[ReqID: %s] レスポンスダンプエラー: %v", msg.ReqID, err)
+		slog.Error(fmt.Sprintf("[ReqID: %s] レスポンスダンプエラー: %v", msg.ReqID, err))
 		return
 	}
 
@@ -176,7 +176,7 @@ func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket
 	_ = wsConn.WriteJSON(respMsg) //nolint: errcheck
 	wsMutex.Unlock()
 
-	log.Printf("[ReqID: %s] ローカルのレスポンスをサーバーへ返却しました (Status: %d)", msg.ReqID, resp.StatusCode)
+	slog.Info(fmt.Sprintf("[ReqID: %s] ローカルのレスポンスをサーバーへ返却しました (Status: %d)", msg.ReqID, resp.StatusCode))
 }
 
 // sendErrorResponse はローカルに繋がらない時などに 502 Bad Gateway を返す
