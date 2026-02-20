@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/middlewares"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/traefik"
 	"github.com/spf13/cobra"
 )
@@ -94,8 +95,11 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"OK"}`)) //nolint:errcheck
 	})
+	skipper := func(r *http.Request) bool {
+		return r.URL.Path == "/healthz"
+	}
 	srv := http.Server{
-		Handler:           mux,
+		Handler:           middlewares.Logging(skipper)(mux),
 		ReadHeaderTimeout: 20 * time.Second,
 	}
 	slog.Info(fmt.Sprintf("Server listening on :%d", args.port))
