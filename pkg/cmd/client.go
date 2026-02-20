@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -163,7 +162,7 @@ func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket
 	// 4. 受け取ったレスポンスを生のバイト列にダンプ
 	rawRespBytes, err := httputil.DumpResponse(resp, true)
 	if err != nil {
-		log.Printf("[ReqID: %s] レスポンスダンプエラー: %v", msg.ReqID, err)
+		slog.Error(fmt.Sprintf("[ReqID: %s] レスポンスダンプエラー: %v", msg.ReqID, err))
 		return
 	}
 
