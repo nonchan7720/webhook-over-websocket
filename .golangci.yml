@@ -1,0 +1,71 @@
+version: "2"
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+
+linters:
+  default: none
+  enable:
+    - asasalint # Check for pass []any as any in variadic func(…any)
+    - asciicheck # Checks that all code identifiers does not have non-ASCII symbols in the name
+    - bidichk # Checks for dangerous unicode character sequences
+    - copyloopvar # A linter detects places where loop variables are copied
+    - cyclop # Checks function and package cyclomatic complexity
+    - dogsled # Checks assignments with too many blank identifiers (e.g. x, _, _, _, := f())
+    - dupl # Detects duplicate fragments of code
+    - errcheck # Errcheck is a program for checking for unchecked errors in Go code. These unchecked errors can be critical bugs in some cases
+    - errchkjson # Checks types passed to the json encoding functions. Reports unsupported types and reports occurrences where the check for the returned error can be omitted
+    - fatcontext # Detects nested contexts in loops and function literals
+    - forcetypeassert # Find forced type assertions
+    - gocognit # Computes and checks the cognitive complexity of functions
+    - goconst # Finds repeated strings that could be replaced by a constant
+    - gosec # Inspects source code for security problems
+    - govet # Vet examines Go source code and reports suspicious constructs. It is roughly the same as 'go vet' and uses its passes
+    - iface # Detect the incorrect use of interfaces, helping developers avoid interface pollution
+    - inamedparam # Reports interfaces with unnamed method parameters
+    - iotamixing # Checks if iotas are being used in const blocks with other non-iota declarations
+    - lll # Reports long lines
+    - nestif # Reports deeply nested if statements
+    - staticcheck # It's the set of rules from staticcheck
+    - unconvert # Remove unnecessary type conversions
+    - unparam # Reports unused function parameters
+    - usestdlibvars # A linter that detect the possibility to use variables/constants from the Go standard library
+    - wastedassign # Finds wasted assignment statements
+    - whitespace # Whitespace is a linter that checks for unnecessary newlines at the start and end of functions, if, for, etc
+  settings:
+    copyloopvar:
+      check-alias: true
+    cyclop:
+      max-complexity: 15
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      exclude-functions:
+        - crypto/rand.Read
+        - (*net/http.Server).Shutdown
+      verbose: true
+    errchkjson:
+      report-no-exported: true
+    fatcontext:
+      check-struct-pointers: true
+    gocognit:
+      min-complexity: 20
+    goconst:
+      numbers: true
+    lll:
+      line-length: 150
+    nestif:
+      min-complexity: 4
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - cyclop
+          - dupl
+          - errcheck
+          - gocognit
+          - gosec
+          - nestif
+          - unparam
+          - lll
+          - errchkjson
