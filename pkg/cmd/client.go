@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/retry"
 	"github.com/spf13/cobra"
 )
 
@@ -102,9 +103,15 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		dialer.TLSClientConfig = tls
 	}
 	wsURL := fmt.Sprintf("%s://%s/ws/%s", websocketScheme, u.Host, channelID)
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, err := retry.Retry(ctx, func() (*websocket.Conn, error) {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("WebSocket connection failed: %w", err)
+		}
+		return conn, nil
+	})
 	if err != nil {
-		return fmt.Errorf("WebSocket connection failed: %w", err)
+		return err
 	}
 	defer conn.Close() //nolint: errcheck
 	slog.Info("A tunnel to the server has been established.")
