@@ -25,6 +25,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	activeChannels   map[string]*ClientConn
+	activeChannelsMu sync.RWMutex
+
+	pendingRequests map[string]chan []byte
+	pendingMu       sync.RWMutex
+
+	upgrader websocket.Upgrader
+
+	myIP string
+)
+
 type serverArgs struct {
 	port       int
 	peerDomain string
@@ -36,8 +48,15 @@ func serverCommand() *cobra.Command {
 	var args serverArgs
 	cmd := &cobra.Command{
 		Use: "server",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		PreRun: func(cmd *cobra.Command, args []string) {
 			myIP = getLocalIP()
+			activeChannels = make(map[string]*ClientConn)
+			pendingRequests = make(map[string]chan []byte)
+			upgrader = websocket.Upgrader{
+				CheckOrigin: func(r *http.Request) bool { return true },
+			}
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return executeServer(cmd.Context(), &args)
 		},
 	}
@@ -61,15 +80,15 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 		return err
 	}
 	mux := http.NewServeMux()
-	// 1. クライアントが起動時に channel_id を発番するためのエンドポイント
+	// Endpoint for clients to generate channelId upon startup
 	mux.HandleFunc("/new", handler.handleNewChannel)
-	// 2. Traefik の HTTP Provider が定期的に見に来る設定出力エンドポイント
+	// The HTTP Provider in Traefik periodically checks the configuration output endpoint.
 	mux.HandleFunc("/traefik-config", handler.handleTraefikConfig)
-	// 3. ピア同士が情報を共有するための内部エンドポイント(追加)
+	// Internal endpoint for peers to share information (additional)
 	mux.HandleFunc("/internal/channels", handler.handleInternalChannels)
-	// 4. クライアントからのWebSocket接続待ち受け
+	// Waiting for WebSocket connections from clients
 	mux.HandleFunc("/ws/{channelId}", handler.handleWebSocket)
-	// 5. Traefik経由で送られてくる外部Webhookの受け口
+	// External webhook reception point via Traefik
 	mux.HandleFunc("/webhook/", handler.handleWebhook)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -102,13 +121,11 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 	return srv.Shutdown(tCtx)
 }
 
-// TunnelMessage はサーバー・クライアント間でやり取りするメッセージ構造体
 type TunnelMessage struct {
 	ReqID   string `json:"req_id"`
 	Payload []byte `json:"payload"`
 }
 
-// 接続中のクライアント管理
 type ClientConn struct {
 	wsConn *websocket.Conn
 	mu     sync.Mutex // WebSocketの同時書き込みを防ぐため
@@ -118,24 +135,6 @@ func (c *ClientConn) isActive() bool {
 	return c.wsConn != nil
 }
 
-var (
-	// channel_id -> クライアントのWebSocketコネクション
-	activeChannels   = make(map[string]*ClientConn)
-	activeChannelsMu sync.RWMutex
-
-	// req_id -> レスポンス待ち受け用チャネル
-	pendingRequests = make(map[string]chan []byte)
-	pendingMu       sync.RWMutex
-
-	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-
-	// 環境変数からの設定（スケールアウト用）
-	myIP string
-)
-
-// /new: 新しい channel_id (UUID) を生成して返す
 func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) {
 	channelID := uuid.New().String()
 	clientConn := &ClientConn{wsConn: nil}
@@ -148,7 +147,6 @@ func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) 
 	slog.Info("new Channel ID has been issued", slog.String("channel-id", channelID))
 }
 
-// ピア通信用の構造体
 type InternalChannelsResp struct {
 	WsChannels      []string `json:"ws_channels"`
 	WebhookChannels []string `json:"webhook_channels"`
@@ -161,7 +159,6 @@ type serverHandle struct {
 	port        int
 }
 
-// /internal/channels: 自分が保持しているチャネル(UUID)一覧を返す
 func (h *serverHandle) handleInternalChannels(w http.ResponseWriter, r *http.Request) {
 	var wsChannels []string
 	var webhookChannels []string
@@ -185,7 +182,6 @@ func (h *serverHandle) handleInternalChannels(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// /traefik-config: Traefikが動的ルーティングを作るためのJSONを返す
 func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Request) { //nolint: gocognit
 	config := traefik.Config{
 		HTTP: traefik.HTTPConfig{
@@ -286,7 +282,6 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 	_ = config.ToJSON(w) //nolint: errcheck,errchkjson
 }
 
-// 他ノードからチャネル一覧を取得するヘルパー関数
 func fetchPeerChannels(hostPort string, ch chan<- InternalChannelsResp, wg *sync.WaitGroup) {
 	defer wg.Done()
 	client := http.Client{Timeout: 2 * time.Second} // 応答を待たせないように短めに
@@ -304,7 +299,6 @@ func fetchPeerChannels(hostPort string, ch chan<- InternalChannelsResp, wg *sync
 	}
 }
 
-// /ws/{channel_id}: クライアントからのWebSocket接続
 func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("channelId")
 	if channelID == "" {
@@ -384,7 +378,6 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// /webhook/{channel_id}: 外部からTraefik経由で届くWebhookを受け取る
 func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/")
 	channelID := parts[0]
