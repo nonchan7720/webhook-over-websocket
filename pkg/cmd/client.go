@@ -34,7 +34,10 @@ func clientCommand() *cobra.Command {
 			return executeClient(cmd.Context(), &args)
 		},
 	}
-
+	flag := cmd.Flags()
+	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
+	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
+	_ = cmd.MarkFlagRequired("server-url")
 	return cmd
 }
 
@@ -100,7 +103,7 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		}
 
 		// リクエストごとに並行処理でローカルへフォワード
-		go handleHTTPRequest(ctx, msg, conn, &wsMutex)
+		go handleHTTPRequest(ctx, msg, conn, &wsMutex, args.targetURL)
 	}
 }
 
@@ -120,7 +123,7 @@ func getNewChannel(serverURL string) (string, error) {
 }
 
 // handleHTTPRequest は受信したバイト列を復元し、ローカルへ送信、結果を返却します
-func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket.Conn, wsMutex *sync.Mutex) {
+func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket.Conn, wsMutex *sync.Mutex, targetURL string) {
 	log.Printf("[ReqID: %s] Webhookを受信、ローカルへ転送します...", msg.ReqID)
 
 	// 1. 生のバイト列を http.Request に復元
@@ -134,9 +137,15 @@ func handleHTTPRequest(ctx context.Context, msg TunnelMessage, wsConn *websocket
 
 	// 2. ローカルサーバー向けにリクエスト情報を書き換え
 	req.RequestURI = "" // クライアントとして送信する場合は空にする必要がある
-	req.URL.Scheme = "http"
-	req.URL.Host = "localhost:3000"
-	req.Host = req.URL.Host
+	target, err := url.Parse(targetURL)
+	if err != nil {
+		log.Printf("[ReqID: %s] ターゲットURL解析エラー: %v", msg.ReqID, err)
+		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
+		return
+	}
+	req.URL.Scheme = target.Scheme
+	req.URL.Host = target.Host
+	req.Host = target.Host
 	req = req.WithContext(ctx)
 
 	// 3. ローカルサーバーへ送信
