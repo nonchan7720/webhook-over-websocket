@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/middlewares"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/traefik"
 	"github.com/spf13/cobra"
@@ -42,7 +43,9 @@ type serverArgs struct {
 	port       int
 	peerDomain string
 
-	cleanupDuration time.Duration
+	cleanupDuration        time.Duration
+	memberListPort         int
+	memberlistSyncDuration time.Duration
 }
 
 func serverCommand() *cobra.Command {
@@ -65,17 +68,28 @@ func serverCommand() *cobra.Command {
 	flag.IntVarP(&args.port, "port", "p", 8080, "server port")
 	flag.StringVar(&args.peerDomain, "peer-domain", "", "peer domain name")
 	flag.DurationVar(&args.cleanupDuration, "cleanup-duration", 5*time.Minute, "channel_id cleanup duration")
+	flag.IntVar(&args.memberListPort, "memberlist-port", 7946, "memberlist port(gossip protocol)")
+	flag.DurationVar(&args.memberlistSyncDuration, "memberlist-sync-duration", 5*time.Second, "channel_id cleanup duration")
 	return cmd
 }
 
 func executeServer(ctx context.Context, args *serverArgs) error {
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
+	mlist, err := cluster.SetUp(args.memberListPort, myIP)
+	if err != nil {
+		return err
+	}
+	mlist.Start(ctx, args.peerDomain, args.memberlistSyncDuration)
+
 	handler := &serverHandle{
 		peerDomain:  args.peerDomain,
 		myServerURL: fmt.Sprintf("http://%s:%d", myIP, args.port),
 		port:        args.port,
+		mlist:       mlist,
 	}
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", args.port))
 	if err != nil {
 		return err
@@ -161,6 +175,8 @@ type serverHandle struct {
 	myServerURL string
 	peerDomain  string
 	port        int
+
+	mlist *cluster.Memberlist
 }
 
 func (h *serverHandle) handleInternalChannels(w http.ResponseWriter, r *http.Request) {
@@ -196,15 +212,15 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 
 	allChannels := make(map[string]InternalChannelsResp) // key: ServerURL
 
-	// 1. まず自分自身の情報を取得
+	// First, obtain your own information.
 	var myWsChannels []string
 	var myWebhookChannels []string
 
 	activeChannelsMu.RLock()
 	for id, client := range activeChannels {
-		myWsChannels = append(myWsChannels, id) // WS用は全て追加
+		myWsChannels = append(myWsChannels, id) // All WS items are added.
 		if client.isActive() {
-			myWebhookChannels = append(myWebhookChannels, id) // Webhook用は接続中のみ追加
+			myWebhookChannels = append(myWebhookChannels, id) // For webhooks, add only while connected
 		}
 	}
 	activeChannelsMu.RUnlock()
@@ -215,35 +231,34 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 		ServerURL:       h.myServerURL,
 	}
 
-	// 2. ピア(兄弟ノード)の情報を取りに行く
-	if peerDomain := h.peerDomain; peerDomain != "" { //nolint: nestif
-		ips, err := net.LookupIP(peerDomain)
-		if err != nil {
-			slog.Info(fmt.Sprintf("DNS lookup failed for %s: %v", peerDomain, err))
-		} else {
-			var wg sync.WaitGroup
-			infoCh := make(chan InternalChannelsResp, len(ips))
+	// Gather information on "active peers" detected by memberlist
+	if nodes := h.mlist.ActiveNodesWithoutSelf(); len(nodes) > 0 { //nolint: nestif
+		var wg sync.WaitGroup
+		infoCh := make(chan InternalChannelsResp, len(nodes))
 
-			for _, ip := range ips {
-				wg.Add(1)
-				go fetchPeerChannels(net.JoinHostPort(ip.String(), fmt.Sprintf("%d", h.port)), infoCh, &wg)
-			}
+		for _, node := range nodes {
+			wg.Add(1)
+			go fetchPeerChannels(
+				net.JoinHostPort(node.Addr.String(), fmt.Sprintf("%d", h.port)),
+				infoCh,
+				&wg,
+			)
+		}
 
-			wg.Wait()
-			close(infoCh)
+		wg.Wait()
+		close(infoCh)
 
-			for info := range infoCh {
-				// 自分の情報はメモリのものが最新なので上書きしない
-				if info.ServerURL != h.myServerURL {
-					allChannels[info.ServerURL] = info
-				}
+		for info := range infoCh {
+			// Since my information is the latest in memory, I won't overwrite it.
+			if info.ServerURL != h.myServerURL {
+				allChannels[info.ServerURL] = info
 			}
 		}
 	}
 
-	// 3. 全ノードの情報をマージしてTraefik用のJSONを作る
+	// Merge information from all nodes to create JSON for Traefik
 	for serverURL, info := range allChannels {
-		// まず、必要なサービス定義を一意にして作成する
+		// First, create the required service definitions uniquely.
 		channelSet := make(map[string]bool)
 		for _, id := range info.WsChannels {
 			channelSet[id] = true
@@ -260,7 +275,7 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 				},
 			}
 		}
-		// Webhook接続用のルーター（接続中のクライアントのみ）
+		// Webhook connection router (only for connected clients)
 		for _, channelID := range info.WebhookChannels {
 			webhookRouterName := "webhook-" + channelID
 			serviceName := "service-" + channelID
@@ -270,7 +285,7 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 				Service: serviceName,
 			}
 		}
-		// WebSocket接続用のルーター（未接続含む全チャネル）
+		// Router for WebSocket connections (all channels, including unconnected ones)
 		for _, channelID := range info.WsChannels {
 			wsRouterName := "ws-" + channelID
 			serviceName := "service-" + channelID
@@ -288,11 +303,11 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 
 func fetchPeerChannels(hostPort string, ch chan<- InternalChannelsResp, wg *sync.WaitGroup) {
 	defer wg.Done()
-	client := http.Client{Timeout: 2 * time.Second} // 応答を待たせないように短めに
+	client := http.Client{Timeout: 2 * time.Second} // Keep it brief to avoid making them wait for a response.
 	url := fmt.Sprintf("http://%s/internal/channels", hostPort)
 	resp, err := client.Get(url)
 	if err != nil {
-		// ゴーストコンテナ等へは疎通できないため無視する
+		// Ghost containers and similar cannot be communicated with, so they are ignored.
 		return
 	}
 	defer resp.Body.Close() //nolint: errcheck
@@ -323,14 +338,15 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Channel is already in use", http.StatusConflict)
 		return
 	}
-	// Upgrade処理でネットワークI/O待ちが発生するため、ロックを外す
+	// The upgrade process causes network I/O waits, so unlock it.
 	clientConn.mu.Unlock()
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "Upgrade error", slog.String("error", err.Error()))
 		return
 	}
-	// Upgrade成功後、再度ロックを取って格納（間に横取りされていないか最終確認）
+	// After the upgrade succeeds, unlock it again and store it
+	// final confirmation that it hasn't been intercepted in the meantime.
 	clientConn.mu.Lock()
 	if clientConn.isActive() {
 		clientConn.mu.Unlock()
@@ -354,15 +370,15 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID))
 	}()
 
-	// WebSocketからクライアントのレスポンスを受信するループ
+	// Loop to receive client responses from WebSocket
 	for {
 		msgType, payload, err := conn.ReadMessage()
 		if err != nil {
-			break // 切断
+			break
 		}
 
 		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
-			continue // 制御フレームなどはスキップ
+			continue
 		}
 
 		var msg TunnelMessage
@@ -371,7 +387,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// 該当するReqIDで待機しているハンドラにレスポンスを渡す
+		// Pass the response to the handler waiting for the corresponding ReqID
 		pendingMu.RLock()
 		respCh, exists := pendingRequests[msg.ReqID]
 		pendingMu.RUnlock()
@@ -395,7 +411,7 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. HTTPリクエストをそのまま生のバイト列(TCPダンプ相当)に変換
+	// Convert HTTP requests directly into raw byte sequences (equivalent to TCP dumps)
 	rawReqBytes, err := httputil.DumpRequest(r, true)
 	if err != nil {
 		http.Error(w, "Error dumping request", http.StatusInternalServerError)
@@ -415,7 +431,6 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		pendingMu.Unlock()
 	}()
 
-	// 2. WebSocketへ送信
 	msg := TunnelMessage{ReqID: reqID, Payload: rawReqBytes}
 	client.mu.Lock()
 	err = client.wsConn.WriteJSON(msg)
@@ -426,18 +441,16 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. クライアントからのレスポンスを待つ
+	// Waiting for a response from the client
 	select {
 	case rawRespBytes := <-respCh:
-		// 生のバイト列を http.Response オブジェクトに復元
+		// Restore the raw byte array to an http.Response object
 		resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(rawRespBytes)), r)
 		if err != nil {
 			http.Error(w, "Bad gateway response from client", http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close() //nolint: errcheck,errchkjson
-
-		// ヘッダーをコピー
 		for k, vv := range resp.Header {
 			for _, v := range vv {
 				w.Header().Add(k, v)

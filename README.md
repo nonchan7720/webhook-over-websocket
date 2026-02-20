@@ -20,20 +20,20 @@ External Service → (HTTP) → Server /webhook/{channel_id}
 
 ## Architecture
 
-| Component | Role |
-|-----------|------|
+| Component  | Role                                                                                                                                                                                                  |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Server** | Publicly accessible HTTP server. Receives webhooks and forwards them over WebSocket to the connected client. Also exposes a Traefik HTTP Provider endpoint for dynamic routing when running at scale. |
-| **Client** | Runs on the local machine. Connects to the server via WebSocket, receives webhook payloads, and forwards them to the local application. |
+| **Client** | Runs on the local machine. Connects to the server via WebSocket, receives webhook payloads, and forwards them to the local application.                                                               |
 
 ### Server Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /new` | Issues a new `channel_id` (UUID) for a client to use |
-| `GET /traefik-config` | Returns dynamic Traefik routing configuration (HTTP Provider) |
-| `GET /internal/channels` | Returns active channel list (used for peer-to-peer sync in multi-replica deployments) |
-| `GET /ws/{channel_id}` | WebSocket upgrade endpoint for client connections |
-| `POST /webhook/{channel_id}[/...]` | Receives external webhook requests and tunnels them to the client |
+| Endpoint                           | Description                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------------- |
+| `GET /new`                         | Issues a new `channel_id` (UUID) for a client to use                                  |
+| `GET /traefik-config`              | Returns dynamic Traefik routing configuration (HTTP Provider)                         |
+| `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments) |
+| `GET /ws/{channel_id}`             | WebSocket upgrade endpoint for client connections                                     |
+| `POST /webhook/{channel_id}[/...]` | Receives external webhook requests and tunnels them to the client                     |
 
 ## Installation
 
@@ -71,9 +71,13 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 
 **Server flags:**
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--port`, `-p` | `8080` | Port to listen on |
+| Flag                         | Default   | Description                                        |
+| ---------------------------- | --------- | -------------------------------------------------- |
+| `--port`, `-p`               | `8080`    | Port to listen on                                  |
+| `--peer-domain`              | *(empty)* | Peer domain name for memberlist cluster discovery  |
+| `--cleanup-duration`         | `5m`      | Interval for cleaning up inactive channel sessions |
+| `--memberlist-port`          | `7946`    | Port for memberlist gossip protocol                |
+| `--memberlist-sync-duration` | `5s`      | Interval for memberlist cluster synchronization    |
 
 ### 2. Start the client
 
@@ -95,9 +99,9 @@ A tunnel to the server has been established.
 
 **Client flags:**
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--server-url` | *(required)* | URL of the webhook-over-websocket server |
+| Flag           | Default                 | Description                                                 |
+| -------------- | ----------------------- | ----------------------------------------------------------- |
+| `--server-url` | *(required)*            | URL of the webhook-over-websocket server                    |
 | `--target-url` | `http://localhost:3000` | URL of the local application to forward webhook requests to |
 
 ### 3. Configure the external service
@@ -112,25 +116,50 @@ Any path suffix after the channel ID is preserved and forwarded to your local ap
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
+| Variable | Description                                                                                                                      |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `POD_IP` | Pod IP address used as the server's own IP (Kubernetes). When set to a valid IPv4 address, it is used instead of auto-detection. |
 
-## Scaling Out (Traefik Integration)
+## Clustering and High Availability
 
-When running multiple server replicas (e.g. in Kubernetes), Traefik can be used as a load balancer with dynamic routing so that webhook requests are always forwarded to the replica that holds the correct WebSocket connection.
+### Traefik Integration with Memberlist
 
-Configure Traefik's [HTTP Provider](https://doc.traefik.io/traefik/providers/http/) to poll `/traefik-config`:
+For production deployments with multiple server replicas (e.g. in Kubernetes), Traefik is used as a load balancer with dynamic routing so that webhook requests are always forwarded to the replica that holds the correct WebSocket connection.
 
+**Challenge:** Traefik's [HTTP Provider](https://doc.traefik.io/traefik/providers/http/) can only poll a single endpoint URL for configuration updates. In a multi-replica deployment, this creates a problem: how can a single endpoint return routing information for channels connected to different replicas?
+
+**Solution:** [HashiCorp Memberlist](https://github.com/hashicorp/memberlist) enables cluster coordination via a gossip-based membership protocol. When Traefik polls any single replica's `/traefik-config` endpoint, that replica automatically aggregates channel information from all cluster members and returns the complete routing configuration.
+
+**How it works:**
+
+1. Each server instance joins the memberlist cluster using the `--peer-domain` flag for DNS-based peer discovery
+2. Servers periodically exchange information about their active channels via the gossip protocol  
+3. When Traefik polls `/traefik-config` on any replica, that replica:
+   - Collects its own active channels
+   - Queries all other alive cluster members via `/internal/channels`
+   - Aggregates all channel information and generates the complete Traefik routing configuration
+4. Inactive or failed nodes are automatically detected and removed from the cluster
+
+**Configuration example:**
+
+Server:
+```bash
+webhook-over-websocket server \
+  --port 8080 \
+  --peer-domain webhook-service.default.svc.cluster.local \
+  --memberlist-port 7946 \
+  --memberlist-sync-duration 5s
+```
+
+Traefik static configuration:
 ```yaml
-# traefik static configuration
 providers:
   http:
     endpoint: "http://webhook-over-websocket-service/traefik-config"
     pollInterval: "5s"
 ```
 
-Each server replica advertises its active channels via `/internal/channels` and aggregates peer information via DNS-based discovery to produce the complete routing configuration.
+With this setup, Traefik can query any single replica (via the Kubernetes service), and that replica will return routing information for all channels across the entire cluster.
 
 ## Development
 
