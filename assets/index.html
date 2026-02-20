@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webhook over WebSocket - Receive Webhooks Behind NAT</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&family=Noto+Sans+JP:wght@400;500;700&display=swap');
+
+    body {
+      font-family: 'Inter', 'Noto Sans JP', sans-serif;
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4 {
+      font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    }
+
+    code,
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .chart-container {
+      position: relative;
+      width: 100%;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+      height: 300px;
+      max-height: 400px;
+    }
+
+    .custom-scroll::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: #64748b;
+    }
+
+    .architecture-node {
+      transition: all 0.3s ease;
+    }
+
+    .architecture-node:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+
+    .tab-active {
+      border-bottom: 2px solid #0ea5e9;
+      /* Sky 500 */
+      color: #0ea5e9;
+    }
+
+    .tab-inactive {
+      border-bottom: 2px solid transparent;
+      color: #64748b;
+    }
+
+    .tab-inactive:hover {
+      color: #334155;
+    }
+
+    /* Language Toggle Helpers */
+    .lang-en.hidden,
+    .lang-ja.hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body class="antialiased">
+
+  <!-- Header / Hero Section -->
+  <header class="bg-white border-b border-slate-200 relative overflow-hidden">
+    <!-- Background Decoration -->
+    <div class="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-10 pointer-events-none">
+      <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-sky-400 rounded-full blur-3xl"></div>
+      <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-400 rounded-full blur-3xl"></div>
+    </div>
+
+    <!-- Language Switcher -->
+    <div class="absolute top-4 right-4 z-50">
+      <button onclick="toggleLanguage()"
+        class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 transition-colors text-sm font-semibold text-slate-700 shadow-sm">
+        <i class="fas fa-globe"></i>
+        <span id="lang-btn-text">日本語</span>
+      </button>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center relative z-10">
+      <div class="inline-flex items-center justify-center p-4 bg-sky-50 rounded-full mb-6 shadow-inner">
+        <i class="fas fa-plug-circle-bolt text-sky-600 text-3xl"></i>
+      </div>
+      <h1 class="text-5xl md:text-6xl font-bold text-slate-900 tracking-tight mb-6">Webhook over WebSocket</h1>
+      <p class="text-xl text-slate-600 max-w-3xl mx-auto mb-10 leading-relaxed">
+        <span class="lang-ja hidden">
+          NATやファイアウォールの背後にあるローカル環境へWebhookを安全に転送。<br>
+          <span class="text-base font-normal text-slate-500 mt-2 block">
+            ngrokなどの外部サービスに依存せず、独自のサーバーとWebSocket通信を用いてセキュアにイベントを受信します。
+          </span>
+        </span>
+        <span class="lang-en">
+          Securely forward Webhooks to local environments behind NAT or firewalls.<br>
+          <span class="text-base font-normal text-slate-500 mt-2 block">
+            Receive events securely using your own server and WebSocket connections, without relying on external
+            services like ngrok.
+          </span>
+        </span>
+      </p>
+
+      <div class="flex justify-center items-center space-x-4 flex-col sm:flex-row gap-4 sm:gap-0">
+        <div class="bg-slate-900 text-slate-200 px-6 py-4 rounded-lg font-mono text-sm flex items-center shadow-lg">
+          <span class="text-sky-400 mr-2">$</span> <span id="install-text">go install
+            github.com/nonchan7720/webhook-over-websocket@latest</span>
+          <button onclick="copyInstall()" class="ml-4 text-slate-400 hover:text-white transition-colors"
+            title="Copy to clipboard">
+            <i class="far fa-copy"></i>
+          </button>
+        </div>
+        <a href="#code-walkthrough"
+          class="px-8 py-4 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-lg shadow-lg transition-all hover:shadow-sky-500/30">
+          Get Started
+        </a>
+      </div>
+      <div id="copy-feedback" class="h-6 mt-2 text-sm text-green-600 font-medium opacity-0 transition-opacity">Copied to
+        clipboard!</div>
+    </div>
+  </header>
+
+  <!-- Context: Introduction to the Problem Space -->
+  <section class="py-16 bg-slate-50">
+    <div class="max-w-5xl mx-auto px-4 text-center">
+      <h2 class="text-3xl font-bold text-slate-900 mb-6">Why Webhook over WebSocket?</h2>
+      <div class="text-slate-600 mb-12 leading-relaxed max-w-3xl mx-auto">
+        <p class="lang-ja hidden">
+          GitHubやStripeなどのWebhookをローカル開発環境でテストする際、通常はパブリックIPが必要です。Webhook over
+          WebSocketは、サーバーとクライアント間の永続的なWebSocket接続を利用し、NATを越えてHTTPリクエストをルーティングします。
+        </p>
+        <p class="lang-en">
+          Testing webhooks from services like GitHub or Stripe locally usually requires a public IP. Webhook over
+          WebSocket utilizes a persistent WebSocket connection between a server and client to route HTTP requests
+          seamlessly through NAT.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <!-- Feature 1 -->
+        <div class="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div class="w-12 h-12 bg-sky-100 rounded-lg flex items-center justify-center mb-6 mx-auto md:mx-0">
+            <i class="fas fa-network-wired text-sky-600 text-xl"></i>
+          </div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-3 text-center md:text-left">
+            <span class="lang-ja hidden">NAT越えの通信</span>
+            <span class="lang-en">Bypass NAT</span>
+          </h3>
+          <p class="text-left text-slate-600 text-sm">
+            <span class="lang-ja hidden">
+              ローカルマシンにパブリックIPは不要です。クライアントからサーバーへWebSocket接続を開始するため、ファイアウォールの設定変更なしに外部からのリクエストを受信できます。
+            </span>
+            <span class="lang-en">
+              No public IP required for your local machine. Because the client initiates the WebSocket connection to the
+              server, it easily traverses firewalls and NAT.
+            </span>
+          </p>
+        </div>
+        <!-- Feature 2 -->
+        <div class="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-6 mx-auto md:mx-0">
+            <i class="fas fa-server text-blue-600 text-xl"></i>
+          </div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-3 text-center md:text-left">
+            <span class="lang-ja hidden">セルフホスト可能</span>
+            <span class="lang-en">Self-Hosted</span>
+          </h3>
+          <p class="text-left text-slate-600 text-sm">
+            <span class="lang-ja hidden">
+              サードパーティのトンネリングサービスに依存しません。自前の安価なVPS等にサーバーをデプロイすることで、完全にコントロールされた環境で通信を保護できます。
+            </span>
+            <span class="lang-en">
+              Don't rely on third-party tunneling services. Deploy the server component on your own affordable VPS to
+              keep your traffic completely under your control.
+            </span>
+          </p>
+        </div>
+        <!-- Feature 3 -->
+        <div class="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+          <div class="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center mb-6 mx-auto md:mx-0">
+            <i class="fas fa-layer-group text-indigo-600 text-xl"></i>
+          </div>
+          <h3 class="text-xl font-semibold text-slate-900 mb-3 text-center md:text-left">
+            <span class="lang-ja hidden">クラスター対応</span>
+            <span class="lang-en">Clustering & HA</span>
+          </h3>
+          <p class="text-left text-slate-600 text-sm">
+            <span class="lang-ja hidden">
+              MemberlistのゴシッププロトコルとTraefik HTTP Providerを統合。マルチレプリカでの高可用性構成を標準でサポートしています。
+            </span>
+            <span class="lang-en">
+              Integrates Memberlist gossip protocol and Traefik HTTP Provider, seamlessly supporting High Availability
+              in multi-replica environments.
+            </span>
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Visualization: Architecture Explorer -->
+  <section class="py-20 bg-white border-y border-slate-200 overflow-hidden">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="text-center mb-16">
+        <h2 class="text-3xl font-bold text-slate-900">Architecture Explorer</h2>
+        <p class="text-slate-500 mt-2 lang-ja hidden">各コンポーネントをクリックして、通信の流れを確認してください。</p>
+        <p class="text-slate-500 mt-2 lang-en">Click on the components below to explore the traffic flow.</p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
+        <!-- Diagram Area -->
+        <div
+          class="lg:col-span-2 bg-slate-50 rounded-3xl p-6 md:p-10 border border-slate-200 flex items-center justify-center overflow-x-auto">
+
+          <div class="flex flex-col md:flex-row items-center justify-between w-full min-w-[600px] gap-4">
+
+            <!-- External Node -->
+            <div class="flex flex-col items-center group relative">
+              <div onclick="showArchInfo('external')"
+                class="architecture-node cursor-pointer bg-white border-2 border-slate-300 p-4 rounded-xl shadow-sm w-32 text-center z-10 hover:border-slate-500">
+                <div class="text-slate-700 text-2xl mb-2"><i class="fab fa-github"></i></div>
+                <div class="font-bold text-xs text-slate-700">External Service</div>
+                <div class="text-[10px] text-slate-400 mt-1">Webhook Source</div>
+              </div>
+            </div>
+
+            <!-- Arrow 1 (HTTP) -->
+            <div class="flex flex-col items-center text-slate-400 px-2">
+              <span class="text-[10px] font-mono mb-1 font-semibold text-sky-600">HTTP POST</span>
+              <i class="fas fa-arrow-right text-xl text-sky-300"></i>
+            </div>
+
+            <!-- Server Node -->
+            <div class="flex flex-col items-center group relative">
+              <div onclick="showArchInfo('server')"
+                class="architecture-node cursor-pointer bg-sky-600 text-white p-5 rounded-xl shadow-lg w-40 text-center z-20 hover:ring-4 hover:ring-sky-200">
+                <div class="text-sky-100 text-2xl mb-2"><i class="fas fa-cloud"></i></div>
+                <div class="font-bold text-sm">Server</div>
+                <div class="text-[10px] text-sky-200 mt-1">/webhook/{id}</div>
+              </div>
+            </div>
+
+            <!-- Arrow 2 (WebSocket) -->
+            <div class="flex flex-col items-center text-slate-400 px-2">
+              <span class="text-[10px] font-mono mb-1 font-semibold text-blue-600">WebSocket</span>
+              <div class="flex items-center">
+                <i class="fas fa-arrow-left text-sm text-blue-300 mr-1"></i>
+                <i class="fas fa-arrow-right text-xl text-blue-500"></i>
+              </div>
+            </div>
+
+            <!-- Client Node -->
+            <div class="flex flex-col items-center group relative">
+              <div onclick="showArchInfo('client')"
+                class="architecture-node cursor-pointer bg-blue-600 text-white p-5 rounded-xl shadow-lg w-40 text-center z-20 hover:ring-4 hover:ring-blue-200">
+                <div class="text-blue-100 text-2xl mb-2"><i class="fas fa-laptop-code"></i></div>
+                <div class="font-bold text-sm">Client</div>
+                <div class="text-[10px] text-blue-200 mt-1">Local Machine</div>
+              </div>
+            </div>
+
+            <!-- Arrow 3 (HTTP) -->
+            <div class="flex flex-col items-center text-slate-400 px-2">
+              <span class="text-[10px] font-mono mb-1 font-semibold text-emerald-600">HTTP POST</span>
+              <i class="fas fa-arrow-right text-xl text-emerald-300"></i>
+            </div>
+
+            <!-- Local App Node -->
+            <div class="flex flex-col items-center group relative">
+              <div onclick="showArchInfo('local')"
+                class="architecture-node cursor-pointer bg-white border-2 border-emerald-500 p-4 rounded-xl shadow-sm w-32 text-center z-10 hover:bg-emerald-50">
+                <div class="text-emerald-500 text-2xl mb-2"><i class="fas fa-server"></i></div>
+                <div class="font-bold text-xs text-slate-700">Local App</div>
+                <div class="text-[10px] text-slate-400 mt-1">localhost:3000</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Info Panel -->
+        <div class="bg-white rounded-3xl p-8 border border-slate-200 shadow-xl h-full flex flex-col justify-center">
+          <div id="arch-info-default">
+            <h3 class="text-xl font-bold text-slate-900 mb-4">How it works</h3>
+            <p class="text-slate-600 leading-relaxed lang-ja hidden">
+              Webhook over WebSocketは、クライアントとサーバー間のセキュアなトンネルを作成します。サーバーが受け取ったHTTPリクエストは、即座にWebSocket経由でクライアントに転送されます。
+            </p>
+            <p class="text-slate-600 leading-relaxed lang-en">
+              Webhook over WebSocket creates a secure tunnel between the client and server. HTTP requests received by
+              the server are instantly forwarded to the client via WebSocket.
+            </p>
+
+            <div class="mt-8 p-4 bg-slate-50 rounded-lg border border-slate-100 flex items-center">
+              <i class="fas fa-hand-pointer text-sky-500 text-xl mr-4 animate-bounce"></i>
+              <span class="text-sm font-medium text-slate-700 lang-ja hidden">左の図のコンポーネントをクリックして詳細を確認</span>
+              <span class="text-sm font-medium text-slate-700 lang-en">Click a component on the diagram to learn
+                more</span>
+            </div>
+          </div>
+
+          <div id="arch-info-external" class="hidden animate-fade-in">
+            <div class="flex items-center mb-4 pb-4 border-b border-slate-100">
+              <div class="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mr-4"><i
+                  class="fab fa-github text-slate-600 text-lg"></i></div>
+              <h3 class="text-xl font-bold text-slate-900">External Service</h3>
+            </div>
+            <div class="lang-ja hidden">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">GitHub, Stripe,
+                Slackなどのサードパーティサービスです。イベント発生時にWebhook（HTTP POST）を送信します。</p>
+              <div class="bg-slate-50 p-3 rounded font-mono text-xs text-slate-600">
+                POST /webhook/{channel_id} HTTP/1.1<br>
+                Host: your-server.example.com<br>
+                Content-Type: application/json
+              </div>
+            </div>
+            <div class="lang-en">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">Third-party services like GitHub, Stripe, or Slack.
+                They send Webhooks (HTTP POST) when an event occurs.</p>
+              <div class="bg-slate-50 p-3 rounded font-mono text-xs text-slate-600">
+                POST /webhook/{channel_id} HTTP/1.1<br>
+                Host: your-server.example.com<br>
+                Content-Type: application/json
+              </div>
+            </div>
+          </div>
+
+          <div id="arch-info-server" class="hidden animate-fade-in">
+            <div class="flex items-center mb-4 pb-4 border-b border-slate-100">
+              <div class="w-10 h-10 bg-sky-100 rounded-full flex items-center justify-center mr-4"><i
+                  class="fas fa-cloud text-sky-600 text-lg"></i></div>
+              <h3 class="text-xl font-bold text-slate-900">Server</h3>
+            </div>
+            <div class="lang-ja hidden">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">公開アクセス可能なHTTPサーバーコンポーネントです。</p>
+              <ul class="space-y-3 text-sm text-slate-600">
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i>
+                  <code>/webhook/{channel_id}</code> で外部からのWebhookを受信</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i>
+                  ClientとのWebSocket接続 (<code>/ws/{channel_id}</code>) を維持</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> 動的ルーティング用の
+                  Traefik HTTP Provider エンドポイントを提供</li>
+              </ul>
+            </div>
+            <div class="lang-en">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">The publicly accessible HTTP server component.</p>
+              <ul class="space-y-3 text-sm text-slate-600">
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> Receives
+                  webhooks at <code>/webhook/{channel_id}</code></li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> Maintains
+                  WebSocket connection with clients (<code>/ws/{channel_id}</code>)</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> Exposes
+                  Traefik HTTP Provider endpoints for dynamic routing</li>
+              </ul>
+            </div>
+          </div>
+
+          <div id="arch-info-client" class="hidden animate-fade-in">
+            <div class="flex items-center mb-4 pb-4 border-b border-slate-100">
+              <div class="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mr-4"><i
+                  class="fas fa-laptop-code text-blue-600 text-lg"></i></div>
+              <h3 class="text-xl font-bold text-slate-900">Client</h3>
+            </div>
+            <div class="lang-ja hidden">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">あなたのローカルPCやプライベートネットワーク内で動作するコンポーネントです。</p>
+              <ul class="space-y-3 text-sm text-slate-600">
+                <li class="flex items-start"><i class="fas fa-check-circle text-blue-500 mt-0.5 mr-2"></i>
+                  ServerへWebSocketで接続（アウトバウンド通信）</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-blue-500 mt-0.5 mr-2"></i>
+                  転送されてきたWebhookペイロードを受け取る</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-blue-500 mt-0.5 mr-2"></i>
+                  ローカルのアプリケーションへリクエストを転送</li>
+              </ul>
+            </div>
+            <div class="lang-en">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">Runs on your local PC or private network.</p>
+              <ul class="space-y-3 text-sm text-slate-600">
+                <li class="flex items-start"><i class="fas fa-check-circle text-blue-500 mt-0.5 mr-2"></i> Connects to
+                  the Server via WebSocket (outbound)</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-blue-500 mt-0.5 mr-2"></i> Receives
+                  incoming webhook payloads</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-blue-500 mt-0.5 mr-2"></i> Forwards the
+                  request to your local application</li>
+              </ul>
+            </div>
+          </div>
+
+          <div id="arch-info-local" class="hidden animate-fade-in">
+            <div class="flex items-center mb-4 pb-4 border-b border-slate-100">
+              <div class="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center mr-4"><i
+                  class="fas fa-server text-emerald-600 text-lg"></i></div>
+              <h3 class="text-xl font-bold text-slate-900">Local App</h3>
+            </div>
+            <div class="lang-ja hidden">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">あなたが開発中のアプリケーションです。</p>
+              <p class="text-slate-600 text-sm leading-relaxed">
+                外部サービスから直接リクエストされたかのように、Webhookを受け取ることができます。デバッグやテストが非常に容易になります。
+              </p>
+              <div
+                class="mt-4 inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-mono rounded border border-emerald-200">
+                http://localhost:3000
+              </div>
+            </div>
+            <div class="lang-en">
+              <p class="text-slate-600 text-sm mb-4 leading-relaxed">Your application under development.</p>
+              <p class="text-slate-600 text-sm leading-relaxed">
+                It receives the Webhook exactly as if the external service made the request directly to it, making
+                debugging and testing a breeze.
+              </p>
+              <div
+                class="mt-4 inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-mono rounded border border-emerald-200">
+                http://localhost:3000
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Code Walkthrough -->
+  <section id="code-walkthrough" class="py-20 bg-slate-900 text-white relative">
+    <div
+      class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjIiIGZpbGw9IiMzMzQxNTUiIGZpbGwtb3BhY2l0eT0iMC40Ii8+PC9zdmc+')] opacity-50 pointer-events-none">
+    </div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-bold text-white mb-4">Setup Guide</h2>
+        <p class="text-slate-400 lang-ja hidden">3つの簡単なステップでルーティングを開始します。</p>
+        <p class="text-slate-400 lang-en">Start routing in three simple steps.</p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12">
+
+        <!-- Interactive Steps -->
+        <div class="flex flex-col justify-center space-y-4">
+          <button onclick="setStep(1)" id="btn-step-1"
+            class="w-full text-left p-6 rounded-xl bg-slate-800 border border-sky-500 hover:bg-slate-700 transition-all group relative overflow-hidden">
+            <div class="flex items-center">
+              <span
+                class="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-sky-600 rounded-full font-bold text-white text-lg mr-5 shadow-lg group-hover:scale-110 transition-transform">1</span>
+              <div>
+                <h4 class="font-bold text-white text-lg mb-1">
+                  <span class="lang-ja hidden">サーバーを起動する</span>
+                  <span class="lang-en">Start the Server</span>
+                </h4>
+                <p class="text-slate-400 text-sm lang-ja hidden">公開アクセス可能なホスト上でサーバーを起動します。</p>
+                <p class="text-slate-400 text-sm lang-en">Run the server on a publicly accessible host.</p>
+              </div>
+            </div>
+          </button>
+
+          <button onclick="setStep(2)" id="btn-step-2"
+            class="w-full text-left p-6 rounded-xl bg-slate-800/50 border border-slate-700 hover:bg-slate-700 transition-all group">
+            <div class="flex items-center">
+              <span
+                class="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-slate-700 rounded-full font-bold text-slate-300 text-lg mr-5 group-hover:bg-slate-600 group-hover:text-white transition-colors">2</span>
+              <div>
+                <h4 class="font-bold text-white text-lg mb-1">
+                  <span class="lang-ja hidden">クライアントを起動する</span>
+                  <span class="lang-en">Start the Client</span>
+                </h4>
+                <p class="text-slate-400 text-sm lang-ja hidden">ローカルマシン上でクライアントを起動し、転送先アプリケーションを指定します。</p>
+                <p class="text-slate-400 text-sm lang-en">Run the client locally, point it at the server and your local
+                  application.</p>
+              </div>
+            </div>
+          </button>
+
+          <button onclick="setStep(3)" id="btn-step-3"
+            class="w-full text-left p-6 rounded-xl bg-slate-800/50 border border-slate-700 hover:bg-slate-700 transition-all group">
+            <div class="flex items-center">
+              <span
+                class="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-slate-700 rounded-full font-bold text-slate-300 text-lg mr-5 group-hover:bg-slate-600 group-hover:text-white transition-colors">3</span>
+              <div>
+                <h4 class="font-bold text-white text-lg mb-1">
+                  <span class="lang-ja hidden">外部サービスを設定する</span>
+                  <span class="lang-en">Configure External Service</span>
+                </h4>
+                <p class="text-slate-400 text-sm lang-ja hidden">外部サービス（GitHub等）のWebhook URLに、発行されたURLを設定します。</p>
+                <p class="text-slate-400 text-sm lang-en">Set the webhook URL in the external service using the provided
+                  channel URL.</p>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Code Display -->
+        <div class="flex items-center">
+          <div class="bg-[#1e1e2e] rounded-xl w-full border border-slate-700 shadow-2xl overflow-hidden">
+            <div class="flex items-center px-4 py-3 bg-[#181825] border-b border-slate-700">
+              <div class="flex space-x-2 mr-4">
+                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+              </div>
+              <span id="filename-display" class="text-xs text-slate-400 font-mono">terminal</span>
+            </div>
+            <div class="p-6 overflow-x-auto custom-scroll font-mono text-sm leading-relaxed text-slate-300 h-[300px]"
+              id="code-block">
+              <!-- Code injected by JS -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Observability Dashboard -->
+  <section class="py-20 bg-slate-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+        <div
+          class="order-2 lg:order-1 bg-white p-6 md:p-8 rounded-3xl shadow-lg border border-slate-100 relative overflow-hidden">
+          <div class="absolute top-0 right-0 w-32 h-32 bg-sky-50 rounded-bl-full z-0"></div>
+
+          <div class="flex justify-between items-center mb-8 relative z-10">
+            <div>
+              <h3 class="font-bold text-slate-800 text-lg">Live Forwarding Monitor</h3>
+              <p class="text-xs text-slate-400">Mock Data Visualization</p>
+            </div>
+            <span class="flex h-3 w-3 relative">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-sky-500"></span>
+            </span>
+          </div>
+          <div class="chart-container relative z-10">
+            <canvas id="metricsChart"></canvas>
+          </div>
+          <div class="mt-4 flex justify-between text-xs text-slate-400 font-mono relative z-10">
+            <span>Last 60s</span>
+            <span>Now</span>
+          </div>
+        </div>
+
+        <div class="order-1 lg:order-2">
+          <div
+            class="inline-flex items-center px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-bold uppercase tracking-wide mb-4">
+            <i class="fas fa-chart-line mr-2"></i> Real-time
+          </div>
+          <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-6">Seamless Data Flow</h2>
+          <p class="text-slate-600 mb-8 text-lg leading-relaxed lang-ja hidden">
+            WebSocketの利点を活かし、HTTPのポーリングによる遅延を排除。Webhookが発生した瞬間に、オーバーヘッドなくローカル環境へイベントが到達します。
+          </p>
+          <p class="text-slate-600 mb-8 text-lg leading-relaxed lang-en">
+            Leverage WebSockets to eliminate polling latency. The moment a webhook is fired, the event is streamed to
+            your local environment with near-zero overhead.
+          </p>
+
+          <ul class="space-y-4">
+            <li class="flex items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <div class="w-10 h-10 bg-green-100 text-green-600 rounded-lg flex items-center justify-center mr-4">
+                <i class="fas fa-bolt"></i>
+              </div>
+              <div>
+                <h4 class="font-bold text-slate-800 text-sm">Low Latency</h4>
+                <p class="text-xs text-slate-500">Persistent connection means instant delivery.</p>
+              </div>
+            </li>
+            <li class="flex items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <div class="w-10 h-10 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center mr-4">
+                <i class="fas fa-shield-alt"></i>
+              </div>
+              <div>
+                <h4 class="font-bold text-slate-800 text-sm">Secure Tunnel</h4>
+                <p class="text-xs text-slate-500">No need to expose local ports to the internet.</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Operational Notes (Tabbed) -->
+  <section class="py-20 bg-white border-t border-slate-200">
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-bold text-slate-900">Deployment & Usage</h2>
+        <p class="text-slate-500 mt-2 lang-ja hidden">柔軟なデプロイオプションを提供しています。</p>
+        <p class="text-slate-500 mt-2 lang-en">Flexible deployment options available.</p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+        <div class="flex border-b border-slate-200 bg-slate-50 overflow-x-auto">
+          <button onclick="showTab('docker')" id="tab-btn-docker"
+            class="flex-1 py-4 px-6 text-center font-bold text-sm tab-active transition-colors whitespace-nowrap">
+            <i class="fab fa-docker mr-2"></i>Docker
+          </button>
+          <button onclick="showTab('flags')" id="tab-btn-flags"
+            class="flex-1 py-4 px-6 text-center font-bold text-sm tab-inactive transition-colors whitespace-nowrap">
+            <i class="fas fa-flag mr-2"></i>CLI Flags
+          </button>
+          <button onclick="showTab('ha')" id="tab-btn-ha"
+            class="flex-1 py-4 px-6 text-center font-bold text-sm tab-inactive transition-colors whitespace-nowrap">
+            <i class="fas fa-network-wired mr-2"></i>High Availability
+          </button>
+        </div>
+
+        <div class="p-6 md:p-8">
+
+          <!-- Tab: Docker -->
+          <div id="tab-content-docker" class="animate-fade-in">
+            <h3 class="text-lg font-bold text-slate-900 mb-4">
+              <span class="lang-ja hidden">Dockerを使用したデプロイ</span>
+              <span class="lang-en">Deployment with Docker</span>
+            </h3>
+            <p class="text-slate-600 text-sm mb-4 lang-ja hidden">
+              公式のDockerイメージを利用して、素早くサーバーを立ち上げることができます。リポジトリにはローカル開発用の <code>docker-compose.yml</code> も含まれています。</p>
+            <p class="text-slate-600 text-sm mb-4 lang-en">Use the official Docker image to quickly spin up the server.
+              The repository also includes a <code>docker-compose.yml</code> for local development.</p>
+
+            <div class="bg-[#1e1e2e] p-4 rounded-xl text-sm font-mono text-slate-300 overflow-x-auto">
+              <pre><span class="text-slate-500"># Pull the image</span>
+<span class="text-pink-400">docker</span> pull ghcr.io/nonchan7720/webhook-over-websocket:latest
+
+<span class="text-slate-500"># Run the server with Docker</span>
+<span class="text-pink-400">docker</span> run --rm -p <span class="text-green-300">8080:8080</span> \
+  ghcr.io/nonchan7720/webhook-over-websocket:latest \
+  server --port <span class="text-green-300">8080</span></pre>
+            </div>
+          </div>
+
+          <!-- Tab: CLI Flags -->
+          <div id="tab-content-flags" class="hidden animate-fade-in">
+            <h3 class="text-lg font-bold text-slate-900 mb-4">
+              <span class="lang-ja hidden">主要なコマンドライン引数</span>
+              <span class="lang-en">Important CLI Flags</span>
+            </h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div>
+                <h4 class="font-bold text-sky-600 mb-3 border-b pb-2"><i class="fas fa-cloud mr-2"></i>Server</h4>
+                <ul class="space-y-4 text-sm text-slate-600">
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--port, -p</code> <br>
+                    <span class="lang-ja hidden">リッスンするポート番号 (default: 8080)</span><span class="lang-en">Port to listen
+                      on (default: 8080)</span>
+                  </li>
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--peer-domain</code> <br>
+                    <span class="lang-ja hidden">memberlistクラスター探索用のピアドメイン名</span><span class="lang-en">Peer domain name
+                      for memberlist cluster discovery</span>
+                  </li>
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--cleanup-duration</code>
+                    <br>
+                    <span class="lang-ja hidden">非アクティブなチャンネルセッションのクリーンアップ間隔 (default: 5m)</span><span
+                      class="lang-en">Interval for cleaning up inactive channel sessions (default: 5m)</span>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <h4 class="font-bold text-blue-600 mb-3 border-b pb-2"><i class="fas fa-laptop-code mr-2"></i>Client
+                </h4>
+                <ul class="space-y-4 text-sm text-slate-600">
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--server-url</code> <br>
+                    <span class="lang-ja hidden">webhook-over-websocket サーバーの URL (必須)</span><span class="lang-en">URL
+                      of the webhook-over-websocket server (required)</span>
+                  </li>
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--target-url</code> <br>
+                    <span class="lang-ja hidden">Webhook リクエストを転送するローカルアプリケーションの URL (default:
+                      http://localhost:3000)</span><span class="lang-en">URL of the local application to forward webhook
+                      requests to (default: http://localhost:3000)</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab: HA -->
+          <div id="tab-content-ha" class="hidden animate-fade-in">
+            <h3 class="text-lg font-bold text-slate-900 mb-4">
+              <span class="lang-ja hidden">Memberlist を使った Traefik 連携</span>
+              <span class="lang-en">Traefik Integration with Memberlist</span>
+            </h3>
+
+            <p class="text-slate-600 text-sm leading-relaxed mb-6">
+              <span class="lang-ja hidden">Kubernetes など複数のサーバーレプリカでの本番環境では、Traefik
+                をロードバランサーとして使用し動的ルーティングを行います。<br>HashiCorp Memberlist のゴシッププロトコルを使ってクラスター連携を実現しており、Traefik がどのレプリカの
+                <code>/traefik-config</code> をポーリングしても、すべてのクラスターメンバーから情報を集約し、完全なルーティング設定を返します。</span>
+              <span class="lang-en">For production deployments with multiple server replicas, Traefik is used as a load
+                balancer with dynamic routing.<br>HashiCorp Memberlist enables cluster coordination via a gossip
+                protocol. When Traefik polls <code>/traefik-config</code> on any replica, that replica automatically
+                aggregates channel info from all members and returns the complete routing configuration.</span>
+            </p>
+
+            <div
+              class="bg-slate-50 border-l-4 border-sky-500 p-4 rounded-r-lg font-mono text-xs text-slate-700 overflow-x-auto">
+              # Server setup example<br>
+              webhook-over-websocket server \<br>
+              &nbsp;&nbsp;--port 8080 \<br>
+              &nbsp;&nbsp;--peer-domain webhook-service.default.svc.cluster.local \<br>
+              &nbsp;&nbsp;--memberlist-port 7946 \<br>
+              &nbsp;&nbsp;--memberlist-sync-duration 5s
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="bg-slate-900 text-slate-400 py-12 border-t border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center">
+      <div class="mb-4 md:mb-0">
+        <h2 class="text-white font-bold text-xl mb-1 flex items-center">
+          <i class="fas fa-plug-circle-bolt text-sky-500 mr-2"></i> Webhook over WebSocket
+        </h2>
+        <p class="text-sm">Created by nonchan7720.</p>
+      </div>
+      <div class="flex space-x-6 text-2xl">
+        <a href="https://github.com/nonchan7720/webhook-over-websocket" target="_blank"
+          class="hover:text-white transition-colors" title="GitHub Repository">
+          <i class="fab fa-github"></i>
+        </a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // --- Language Switcher Logic ---
+    let currentLang = 'en';
+
+    function toggleLanguage() {
+      currentLang = currentLang === 'ja' ? 'en' : 'ja';
+
+      // Toggle visibility using utility classes
+      const enElements = document.querySelectorAll('.lang-en');
+      const jaElements = document.querySelectorAll('.lang-ja');
+
+      jaElements.forEach(el => {
+        if (currentLang === 'ja') el.classList.remove('hidden');
+        else el.classList.add('hidden');
+      });
+
+      enElements.forEach(el => {
+        if (currentLang === 'en') el.classList.remove('hidden');
+        else el.classList.add('hidden');
+      });
+
+      // Update button text
+      document.getElementById('lang-btn-text').innerText = currentLang === 'ja' ? 'English' : '日本語';
+
+      // Re-render code to switch comments
+      renderCode(currentStep);
+    }
+
+    // --- Code Snippets ---
+    const codeSnippets = {
+      ja: {
+        1: `# 公開アクセス可能なホスト上でサーバーを起動
+$ webhook-over-websocket server --port 8080`,
+        2: `# サーバーとローカルアプリケーションを指定して起動
+$ webhook-over-websocket client \\
+  --server-url http://your-server.example.com \\
+  --target-url http://localhost:3000
+
+# 起動時の出力
+Issued Channel ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+Please set the webhook destination as follows: http://your-server.example.com/webhook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+A tunnel to the server has been established.`,
+        3: `# 外部サービス（GitHub、Stripe など）の Webhook URL に以下を設定してください：
+http://your-server.example.com/webhook/<channel_id>
+
+# チャンネル ID 以降のパスサフィックスは
+# そのままローカルアプリケーションへ転送されます。`
+      },
+      en: {
+        1: `# Run the server on a publicly accessible host
+$ webhook-over-websocket server --port 8080`,
+        2: `# Run the client locally, pointing it at the server and local app
+$ webhook-over-websocket client \\
+  --server-url http://your-server.example.com \\
+  --target-url http://localhost:3000
+
+# On startup, the client prints:
+Issued Channel ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+Please set the webhook destination as follows: http://your-server.example.com/webhook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+A tunnel to the server has been established.`,
+        3: `# Set the webhook URL in the external service (e.g. GitHub, Stripe) to:
+http://your-server.example.com/webhook/<channel_id>
+
+# Any path suffix after the channel ID is preserved 
+# and forwarded to your local application as-is.`
+      }
+    };
+
+    let currentStep = 1;
+
+    function renderCode(activeStep) {
+      currentStep = activeStep;
+      const currentSnippet = codeSnippets[currentLang][activeStep];
+      const lines = currentSnippet.split('\n');
+      const container = document.getElementById('code-block');
+      container.innerHTML = '';
+
+      lines.forEach((line) => {
+        const div = document.createElement('div');
+        div.className = "flex mb-1";
+
+        const codeSpan = document.createElement('pre');
+        codeSpan.className = "flex-1 whitespace-pre-wrap font-mono text-[13px] md:text-sm";
+        codeSpan.innerText = line;
+
+        // Syntax coloring logic updated to match README outputs
+        if (line.trim().startsWith('#')) {
+          codeSpan.className += " text-[#6c7086] italic"; // comments
+        } else if (line.trim().startsWith('$')) {
+          codeSpan.innerHTML = `<span class="text-sky-400">$</span> <span class="text-[#cdd6f4]">${line.substring(2)}</span>`;
+        } else if (line.includes('Issued Channel ID:') || line.includes('Please set the webhook') || line.includes('A tunnel to the')) {
+          codeSpan.className += " text-emerald-400"; // Output lines
+        } else {
+          codeSpan.className += " text-[#cdd6f4]"; // standard text
+        }
+
+        div.appendChild(codeSpan);
+        container.appendChild(div);
+      });
+    }
+
+    function setStep(step) {
+      renderCode(step);
+      // Update button styles
+      for (let i = 1; i <= 3; i++) {
+        const btn = document.getElementById(`btn-step-${i}`);
+        const badge = btn.querySelector('span');
+
+        if (i === step) {
+          btn.classList.remove('bg-slate-800/50', 'border-slate-700');
+          btn.classList.add('bg-slate-800', 'border-sky-500');
+          badge.classList.remove('bg-slate-700', 'text-slate-300');
+          badge.classList.add('bg-sky-600', 'text-white', 'shadow-lg');
+        } else {
+          btn.classList.add('bg-slate-800/50', 'border-slate-700');
+          btn.classList.remove('bg-slate-800', 'border-sky-500');
+          badge.classList.add('bg-slate-700', 'text-slate-300');
+          badge.classList.remove('bg-sky-600', 'text-white', 'shadow-lg');
+        }
+      }
+    }
+
+    // Initial Render
+    renderCode(1);
+    setStep(1);
+
+    // --- Architecture Info Logic ---
+    function showArchInfo(type) {
+      document.getElementById('arch-info-default').classList.add('hidden');
+      ['external', 'server', 'client', 'local'].forEach(id => {
+        document.getElementById(`arch-info-${id}`).classList.add('hidden');
+      });
+      document.getElementById(`arch-info-${type}`).classList.remove('hidden');
+    }
+
+    // --- Operational Tabs Logic ---
+    function showTab(tabName) {
+      ['docker', 'flags', 'ha'].forEach(t => {
+        document.getElementById(`tab-content-${t}`).classList.add('hidden');
+      });
+
+      document.getElementById(`tab-content-${tabName}`).classList.remove('hidden');
+
+      ['docker', 'flags', 'ha'].forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tabName) {
+          btn.classList.add('tab-active');
+          btn.classList.remove('tab-inactive');
+        } else {
+          btn.classList.remove('tab-active');
+          btn.classList.add('tab-inactive');
+        }
+      });
+    }
+
+    // --- Copy to Clipboard ---
+    function copyInstall() {
+      const cmd = document.getElementById('install-text').innerText;
+      navigator.clipboard.writeText(cmd).then(() => {
+        const feedback = document.getElementById('copy-feedback');
+        feedback.classList.remove('opacity-0');
+        setTimeout(() => feedback.classList.add('opacity-0'), 2000);
+      });
+    }
+
+    // --- Chart.js Simulation ---
+    const ctx = document.getElementById('metricsChart').getContext('2d');
+    const dataPoints = 30;
+    const labels = Array.from({ length: dataPoints }, (_, i) => i);
+
+    // Mock data: Start with mostly 0s, occasional spikes
+    const tputData = new Array(dataPoints).fill(0);
+
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Requests/sec',
+          data: tputData,
+          backgroundColor: '#0ea5e9', // Sky 500
+          borderRadius: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: false }
+        },
+        scales: {
+          x: { display: false },
+          y: {
+            min: 0,
+            max: 10,
+            grid: { color: '#f1f5f9' },
+            ticks: { stepSize: 2 }
+          }
+        },
+        animation: { duration: 200 }
+      }
+    });
+
+    // Simulate live webhook hits
+    setInterval(() => {
+      const currentData = chart.data.datasets[0].data;
+      currentData.shift();
+
+      let newVal = 0;
+      // Simulate burst traffic
+      if (Math.random() > 0.8) {
+        newVal = Math.floor(Math.random() * 8) + 1;
+      }
+
+      currentData.push(newVal);
+      chart.update();
+    }, 1000);
+
+  </script>
+</body>
+
+</html>
