@@ -120,7 +120,7 @@ jobs:
       - name: Create and push multi-arch manifest to GHCR
         shell: bash
         run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/${NAME}:${{ env.VERSION }}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
           docker buildx imagetools create \
             -t "$IMAGE" \
             "$IMAGE-amd64" \
