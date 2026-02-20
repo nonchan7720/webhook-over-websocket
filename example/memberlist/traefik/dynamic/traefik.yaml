@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://json.schemastore.org/traefik-v3.json
+http:
+  routers:
+    app:
+      rule: PathPrefix(`/new`) || PathPrefix(`/webhook/`)
+      service: app
+  services:
+    app:
+      loadBalancer:
+        servers:
+          - url: http://service:8080
