@@ -71,6 +71,10 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 	mux.HandleFunc("/ws/{channelId}", handler.handleWebSocket)
 	// 5. Traefik経由で送られてくる外部Webhookの受け口
 	mux.HandleFunc("/webhook/", handler.handleWebhook)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"OK"}`)) //nolint:errcheck
+	})
 	srv := http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 20 * time.Second,
