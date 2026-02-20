@@ -1,0 +1,12 @@
+services:
+  service:
+    image: webhook-over-websocket-local
+    build:
+      context: ../../
+    command:
+      - webhook-over-websocket
+      - server
+      - --peer-domain
+      - service
+    deploy:
+      replicas: 3
