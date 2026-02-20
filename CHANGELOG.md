@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.0.0...v1.1.0) (2026-02-20)
+
+
+### Features
+
+* healthz ([#12](https://github.com/nonchan7720/webhook-over-websocket/issues/12)) ([9e97066](https://github.com/nonchan7720/webhook-over-websocket/commit/9e97066ffd15398b02359ea45af2af101991180e))
+
 ## 1.0.0 (2026-02-20)
 
 
