@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.0...v1.3.0) (2026-02-20)
+
+
+### Features
+
+* add logging ([#18](https://github.com/nonchan7720/webhook-over-websocket/issues/18)) ([aed730c](https://github.com/nonchan7720/webhook-over-websocket/commit/aed730c5c3929b6d631b784876547846449eadfd))
+* cluster by memberlist ([#21](https://github.com/nonchan7720/webhook-over-websocket/issues/21)) ([1b7cd23](https://github.com/nonchan7720/webhook-over-websocket/commit/1b7cd2305952fa2cb7976160b8748cfd161c8993))
+
+
+### Bug Fixes
+
+* memberlist and traefik dynamic router ([#23](https://github.com/nonchan7720/webhook-over-websocket/issues/23)) ([0af6f08](https://github.com/nonchan7720/webhook-over-websocket/commit/0af6f08e32d734380631b58c5ba91f398579ff56))
+
+
+### Documentation
+
+* Add Japanese README (README_ja.md) ([#22](https://github.com/nonchan7720/webhook-over-websocket/issues/22)) ([2b5fec7](https://github.com/nonchan7720/webhook-over-websocket/commit/2b5fec7b7cad281d09fd359ae9c6b59903b4f2e8))
+
+
+### Code Refactoring
+
+* server and client ([#16](https://github.com/nonchan7720/webhook-over-websocket/issues/16)) ([86b9af0](https://github.com/nonchan7720/webhook-over-websocket/commit/86b9af0931dd9c3c5a5f2d6a2fe2f1fc8930a458))
+
 ## [1.2.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.1.0...v1.2.0) (2026-02-20)
 
 
