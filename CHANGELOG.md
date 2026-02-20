@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.1.0...v1.2.0) (2026-02-20)
+
+
+### Features
+
+* add insecure connect flag ([#14](https://github.com/nonchan7720/webhook-over-websocket/issues/14)) ([49c905a](https://github.com/nonchan7720/webhook-over-websocket/commit/49c905a0f49a9f0edf0f7507df0d915c9384ede1))
+
 ## [1.1.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.0.0...v1.1.0) (2026-02-20)
 
 
