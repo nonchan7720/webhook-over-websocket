@@ -11,6 +11,6 @@ func rootCommand() *cobra.Command {
 
 	cmd.AddCommand(serverCommand())
 	cmd.AddCommand(clientCommand())
-
+	cmd.AddCommand(echoCommand())
 	return cmd
 }

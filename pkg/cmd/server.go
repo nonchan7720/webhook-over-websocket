@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -22,12 +21,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/traefik"
 	"github.com/spf13/cobra"
 )
 
 type serverArgs struct {
 	port       int
 	peerDomain string
+
+	cleanupDuration time.Duration
 }
 
 func serverCommand() *cobra.Command {
@@ -35,11 +37,14 @@ func serverCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "server",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			myIP = getLocalIP()
 			return executeServer(cmd.Context(), &args)
 		},
 	}
 	flag := cmd.Flags()
 	flag.IntVarP(&args.port, "port", "p", 8080, "server port")
+	flag.StringVar(&args.peerDomain, "peer-domain", "", "peer domain name")
+	flag.DurationVar(&args.cleanupDuration, "cleanup-duration", 5*time.Minute, "channel_id cleanup duration")
 	return cmd
 }
 
@@ -63,17 +68,26 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 	// 3. ピア同士が情報を共有するための内部エンドポイント(追加)
 	mux.HandleFunc("/internal/channels", handler.handleInternalChannels)
 	// 4. クライアントからのWebSocket接続待ち受け
-	mux.HandleFunc("/ws/", handler.handleWebSocket)
+	mux.HandleFunc("/ws/{channelId}", handler.handleWebSocket)
 	// 5. Traefik経由で送られてくる外部Webhookの受け口
 	mux.HandleFunc("/webhook/", handler.handleWebhook)
 	srv := http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 20 * time.Second,
 	}
-	log.Println("Server listening on :8080")
+	slog.Info(fmt.Sprintf("Server listening on :%d", args.port))
 	go func() {
 		if err := srv.Serve(lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Warn("failed to run server", slog.String("error", err.Error()))
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(args.cleanupDuration)
+		select {
+		case <-ticker.C:
+			cleanNonActiveSession()
+		case <-ctx.Done():
+			return
 		}
 	}()
 
@@ -96,10 +110,14 @@ type ClientConn struct {
 	mu     sync.Mutex // WebSocketの同時書き込みを防ぐため
 }
 
+func (c *ClientConn) isActive() bool {
+	return c.wsConn != nil
+}
+
 var (
 	// channel_id -> クライアントのWebSocketコネクション
-	activeChannels = make(map[string]*ClientConn)
-	channelsMu     sync.RWMutex
+	activeChannels   = make(map[string]*ClientConn)
+	activeChannelsMu sync.RWMutex
 
 	// req_id -> レスポンス待ち受け用チャネル
 	pendingRequests = make(map[string]chan []byte)
@@ -110,26 +128,27 @@ var (
 	}
 
 	// 環境変数からの設定（スケールアウト用）
-	myIP = getLocalIP()
+	myIP string
 )
 
 // /new: 新しい channel_id (UUID) を生成して返す
 func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) {
 	channelID := uuid.New().String()
-
-	// ※ 本来はここでチャネルの有効期限などをDBに記録しますが、
-	// 今回は簡単のため、WebSocketが繋がった時点で activeChannels に登録します。
-
+	clientConn := &ClientConn{wsConn: nil}
+	activeChannelsMu.Lock()
+	activeChannels[channelID] = clientConn
+	activeChannelsMu.Unlock()
 	resp := map[string]string{"channel_id": channelID}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp) //nolint: errcheck,errchkjson
-	log.Printf("新しい Channel ID を発番しました: %s", channelID)
+	slog.Info("new Channel ID has been issued", slog.String("channel-id", channelID))
 }
 
 // ピア通信用の構造体
 type InternalChannelsResp struct {
-	Channels  []string `json:"channels"`
-	ServerURL string   `json:"server_url"`
+	WsChannels      []string `json:"ws_channels"`
+	WebhookChannels []string `json:"webhook_channels"`
+	ServerURL       string   `json:"server_url"`
 }
 
 type serverHandle struct {
@@ -140,70 +159,63 @@ type serverHandle struct {
 
 // /internal/channels: 自分が保持しているチャネル(UUID)一覧を返す
 func (h *serverHandle) handleInternalChannels(w http.ResponseWriter, r *http.Request) {
-	var channels []string
-	channelsMu.RLock()
-	for id := range activeChannels {
-		channels = append(channels, id)
+	var wsChannels []string
+	var webhookChannels []string
+
+	activeChannelsMu.RLock()
+	for id, client := range activeChannels {
+		// WS用のルーターは未接続（発行済み）でも作成する
+		wsChannels = append(wsChannels, id)
+		// Webhook用のルーターは実際に接続済み（isActive）の時のみ作成する
+		if client.isActive() {
+			webhookChannels = append(webhookChannels, id)
+		}
 	}
-	channelsMu.RUnlock()
+	activeChannelsMu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(&InternalChannelsResp{ //nolint: errcheck,errchkjson
-		Channels:  channels,
-		ServerURL: h.myServerURL,
+		WsChannels:      wsChannels,
+		WebhookChannels: webhookChannels,
+		ServerURL:       h.myServerURL,
 	})
 }
 
 // /traefik-config: Traefikが動的ルーティングを作るためのJSONを返す
-func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Request) {
-	type Server struct {
-		URL string `json:"url"`
-	}
-	type LoadBalancer struct {
-		Servers []Server `json:"servers"`
-	}
-	type Service struct {
-		LoadBalancer LoadBalancer `json:"loadBalancer"`
-	}
-	type Router struct {
-		Rule    string `json:"rule"`
-		Service string `json:"service"`
-	}
-	type HTTPConfig struct {
-		Routers  map[string]Router  `json:"routers"`
-		Services map[string]Service `json:"services"`
-	}
-	type TraefikProvider struct {
-		HTTP HTTPConfig `json:"http"`
-	}
-
-	config := TraefikProvider{
-		HTTP: HTTPConfig{
-			Routers:  make(map[string]Router),
-			Services: make(map[string]Service),
+func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Request) { //nolint: gocognit
+	config := traefik.Config{
+		HTTP: traefik.HTTPConfig{
+			Routers:  make(map[string]traefik.RouterConfig),
+			Services: make(map[string]traefik.ServiceConfig),
 		},
 	}
 
 	allChannels := make(map[string]InternalChannelsResp) // key: ServerURL
 
 	// 1. まず自分自身の情報を取得
-	myChannels := []string{}
-	channelsMu.RLock()
-	for id := range activeChannels {
-		myChannels = append(myChannels, id)
+	var myWsChannels []string
+	var myWebhookChannels []string
+
+	activeChannelsMu.RLock()
+	for id, client := range activeChannels {
+		myWsChannels = append(myWsChannels, id) // WS用は全て追加
+		if client.isActive() {
+			myWebhookChannels = append(myWebhookChannels, id) // Webhook用は接続中のみ追加
+		}
 	}
-	channelsMu.RUnlock()
+	activeChannelsMu.RUnlock()
 
 	allChannels[h.myServerURL] = InternalChannelsResp{
-		Channels:  myChannels,
-		ServerURL: h.myServerURL,
+		WsChannels:      myWsChannels,
+		WebhookChannels: myWebhookChannels,
+		ServerURL:       h.myServerURL,
 	}
 
 	// 2. ピア(兄弟ノード)の情報を取りに行く
 	if peerDomain := h.peerDomain; peerDomain != "" { //nolint: nestif
 		ips, err := net.LookupIP(peerDomain)
 		if err != nil {
-			log.Printf("DNS lookup failed for %s: %v", peerDomain, err)
+			slog.Info(fmt.Sprintf("DNS lookup failed for %s: %v", peerDomain, err))
 		} else {
 			var wg sync.WaitGroup
 			infoCh := make(chan InternalChannelsResp, len(ips))
@@ -227,26 +239,47 @@ func (h *serverHandle) handleTraefikConfig(w http.ResponseWriter, r *http.Reques
 
 	// 3. 全ノードの情報をマージしてTraefik用のJSONを作る
 	for serverURL, info := range allChannels {
-		for _, channelID := range info.Channels {
-			routerName := "router-" + channelID
+		// まず、必要なサービス定義を一意にして作成する
+		channelSet := make(map[string]bool)
+		for _, id := range info.WsChannels {
+			channelSet[id] = true
+		}
+		for _, id := range info.WebhookChannels {
+			channelSet[id] = true
+		}
+
+		for channelID := range channelSet {
+			serviceName := "service-" + channelID
+			config.HTTP.Services[serviceName] = traefik.ServiceConfig{
+				LoadBalancer: traefik.LoadBalancerConfig{
+					Servers: []traefik.ServerConfig{{URL: serverURL}},
+				},
+			}
+		}
+		// Webhook接続用のルーター（接続中のクライアントのみ）
+		for _, channelID := range info.WebhookChannels {
+			webhookRouterName := "webhook-" + channelID
 			serviceName := "service-" + channelID
 
-			config.HTTP.Routers[routerName] = Router{
-				// 例: /webhook/1234-abcd へのアクセスをこのサービスに流す
+			config.HTTP.Routers[webhookRouterName] = traefik.RouterConfig{
 				Rule:    fmt.Sprintf("PathPrefix(`/webhook/%s`)", channelID),
 				Service: serviceName,
 			}
-			config.HTTP.Services[serviceName] = Service{
-				LoadBalancer: LoadBalancer{
-					// その UUID を持っている固有のサーバーへ転送する
-					Servers: []Server{{URL: serverURL}},
-				},
+		}
+		// WebSocket接続用のルーター（未接続含む全チャネル）
+		for _, channelID := range info.WsChannels {
+			wsRouterName := "ws-" + channelID
+			serviceName := "service-" + channelID
+
+			config.HTTP.Routers[wsRouterName] = traefik.RouterConfig{
+				Rule:    fmt.Sprintf("PathPrefix(`/ws/%s`)", channelID),
+				Service: serviceName,
 			}
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(config) //nolint: errcheck,errchkjson
+	_ = config.ToJSON(w) //nolint: errcheck,errchkjson
 }
 
 // 他ノードからチャネル一覧を取得するヘルパー関数
@@ -269,40 +302,71 @@ func fetchPeerChannels(hostPort string, ch chan<- InternalChannelsResp, wg *sync
 
 // /ws/{channel_id}: クライアントからのWebSocket接続
 func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	channelID := strings.TrimPrefix(r.URL.Path, "/ws/")
+	channelID := r.PathValue("channelId")
 	if channelID == "" {
 		http.Error(w, "Missing channel_id", http.StatusBadRequest)
 		return
 	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Upgrade error:", err)
+	activeChannelsMu.RLock()
+	clientConn, exists := activeChannels[channelID]
+	activeChannelsMu.RUnlock()
+	if !exists {
+		http.Error(w, "Forbidden or invalid channel_id", http.StatusForbidden)
 		return
 	}
 
-	clientConn := &ClientConn{wsConn: conn}
+	clientConn.mu.Lock()
+	if clientConn.isActive() {
+		clientConn.mu.Unlock()
+		http.Error(w, "Channel is already in use", http.StatusConflict)
+		return
+	}
+	// Upgrade処理でネットワークI/O待ちが発生するため、ロックを外す
+	clientConn.mu.Unlock()
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "Upgrade error", slog.String("error", err.Error()))
+		return
+	}
+	// Upgrade成功後、再度ロックを取って格納（間に横取りされていないか最終確認）
+	clientConn.mu.Lock()
+	if clientConn.isActive() {
+		clientConn.mu.Unlock()
+		_ = conn.WriteMessage( //nolint: errcheck
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "Channel is already in use"),
+		)
+		_ = conn.Close() //nolint: errcheck
+		return
+	}
+	clientConn.wsConn = conn
+	clientConn.mu.Unlock()
 
-	channelsMu.Lock()
-	activeChannels[channelID] = clientConn
-	channelsMu.Unlock()
-
-	log.Printf("Client connected: %s", channelID)
+	slog.Info(fmt.Sprintf("Client connected: %s", channelID))
 
 	defer func() {
-		channelsMu.Lock()
+		activeChannelsMu.Lock()
 		delete(activeChannels, channelID)
-		channelsMu.Unlock()
+		activeChannelsMu.Unlock()
 		_ = conn.Close() //nolint: errcheck
-		log.Printf("Client disconnected: %s", channelID)
+		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID))
 	}()
 
 	// WebSocketからクライアントのレスポンスを受信するループ
 	for {
-		var msg TunnelMessage
-		err := conn.ReadJSON(&msg)
+		msgType, payload, err := conn.ReadMessage()
 		if err != nil {
 			break // 切断
+		}
+
+		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
+			continue // 制御フレームなどはスキップ
+		}
+
+		var msg TunnelMessage
+		if err := json.Unmarshal(payload, &msg); err != nil {
+			slog.Warn("Failed to unmarshal tunnel message", slog.String("error", err.Error()))
+			continue
 		}
 
 		// 該当するReqIDで待機しているハンドラにレスポンスを渡す
@@ -321,11 +385,11 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/")
 	channelID := parts[0]
 
-	channelsMu.RLock()
+	activeChannelsMu.RLock()
 	client, exists := activeChannels[channelID]
-	channelsMu.RUnlock()
+	activeChannelsMu.RUnlock()
 
-	if !exists {
+	if !exists || client.wsConn == nil {
 		http.Error(w, "Client not connected", http.StatusNotFound)
 		return
 	}
@@ -457,4 +521,23 @@ func getCandidateIP() string { //nolint: gocognit
 	}
 
 	return ""
+}
+
+func cleanNonActiveSession() {
+	activeChannelsMu.RLock() // 【修正】並行アクセス(panic)を防ぐため RLock を追加
+	nonActiveSession := make([]string, 0, len(activeChannels))
+	for id, client := range activeChannels {
+		if !client.isActive() {
+			nonActiveSession = append(nonActiveSession, id)
+		}
+	}
+	activeChannelsMu.RUnlock() // 読み取り完了後にロック解除
+	if len(nonActiveSession) == 0 {
+		return
+	}
+	activeChannelsMu.Lock()
+	defer activeChannelsMu.Unlock()
+	for _, id := range nonActiveSession {
+		delete(activeChannels, id)
+	}
 }
