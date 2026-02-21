@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/auth"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/middlewares"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/traefik"
@@ -50,6 +51,12 @@ type serverArgs struct {
 
 	logLevel  string
 	logFormat string
+
+	// GitHub OAuth / Auth configuration
+	githubClientID     string
+	githubClientSecret string
+	githubOrg          string
+	jwtSecret          string
 }
 
 func serverCommand() *cobra.Command {
@@ -107,12 +114,25 @@ func serverCommand() *cobra.Command {
 	flag.DurationVar(&args.memberlistSyncDuration, "memberlist-sync-duration", 5*time.Second, "channel_id cleanup duration")
 	flag.StringVar(&args.logLevel, "log-level", "INFO", "log level")
 	flag.StringVar(&args.logFormat, "log-format", "text", "log format")
+	flag.StringVar(&args.githubClientID, "github-client-id", "", "GitHub OAuth App client ID (enables authentication)")
+	flag.StringVar(&args.githubClientSecret, "github-client-secret", "", "GitHub OAuth App client secret")
+	flag.StringVar(&args.githubOrg, "github-org", "", "required GitHub organization for access (optional)")
+	flag.StringVar(&args.jwtSecret, "jwt-secret", "", "secret key for signing JWT tokens (required when auth is enabled)")
 	return cmd
 }
 
 func executeServer(ctx context.Context, args *serverArgs) error {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+
+	// Validate auth configuration
+	authEnabled := args.githubClientID != ""
+	if authEnabled && args.jwtSecret == "" {
+		return fmt.Errorf("--jwt-secret is required when --github-client-id is set")
+	}
+	if authEnabled && args.githubClientSecret == "" {
+		return fmt.Errorf("--github-client-secret is required when --github-client-id is set")
+	}
 
 	mlist, err := cluster.SetUp(args.memberListPort, myIP)
 	if err != nil {
@@ -121,10 +141,14 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 	mlist.Start(ctx, args.peerDomain, args.memberlistSyncDuration)
 
 	handler := &serverHandle{
-		peerDomain:  args.peerDomain,
-		myServerURL: fmt.Sprintf("http://%s:%d", myIP, args.port),
-		port:        args.port,
-		mlist:       mlist,
+		peerDomain:         args.peerDomain,
+		myServerURL:        fmt.Sprintf("http://%s:%d", myIP, args.port),
+		port:               args.port,
+		mlist:              mlist,
+		jwtSecret:          []byte(args.jwtSecret),
+		githubClientID:     args.githubClientID,
+		githubClientSecret: args.githubClientSecret,
+		githubOrg:          args.githubOrg,
 	}
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", args.port))
@@ -132,8 +156,18 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 		return err
 	}
 	mux := http.NewServeMux()
+
 	// Endpoint for clients to generate channelId upon startup
-	mux.HandleFunc("/new", handler.handleNewChannel)
+	if authEnabled {
+		mux.Handle("/new", middlewares.JWTSession(handler.jwtSecret)(http.HandlerFunc(handler.handleNewChannel)))
+	} else {
+		mux.HandleFunc("/new", handler.handleNewChannel)
+	}
+	// GitHub OAuth endpoints (only registered when auth is enabled)
+	if authEnabled {
+		mux.HandleFunc("/auth/github", handler.handleAuthGitHub)
+		mux.HandleFunc("/auth/callback", handler.handleAuthCallback)
+	}
 	// The HTTP Provider in Traefik periodically checks the configuration output endpoint.
 	mux.HandleFunc("/traefik-config", handler.handleTraefikConfig)
 	// Internal endpoint for peers to share information (additional)
@@ -205,9 +239,20 @@ func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) 
 	activeChannelsMu.Lock()
 	activeChannels[channelID] = clientConn
 	activeChannelsMu.Unlock()
-	resp := map[string]string{"channel_id": channelID}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp) //nolint: errcheck,errchkjson
+	// When auth is enabled, issue a channel JWT with sub=channelID
+	if len(h.jwtSecret) > 0 {
+		channelToken, err := auth.IssueChannelToken(h.jwtSecret, channelID)
+		if err != nil {
+			http.Error(w, "failed to issue channel token", http.StatusInternalServerError)
+			return
+		}
+		resp := map[string]string{"channel_id": channelID, "token": channelToken}
+		_ = json.NewEncoder(w).Encode(resp) //nolint: errcheck,errchkjson
+	} else {
+		resp := map[string]string{"channel_id": channelID}
+		_ = json.NewEncoder(w).Encode(resp) //nolint: errcheck,errchkjson
+	}
 	slog.Info("new Channel ID has been issued", slog.String("channel-id", channelID))
 }
 
@@ -223,6 +268,85 @@ type serverHandle struct {
 	port        int
 
 	mlist *cluster.Memberlist
+
+	// auth fields (nil/empty means auth is disabled)
+	jwtSecret          []byte
+	githubClientID     string
+	githubClientSecret string
+	githubOrg          string
+}
+
+func (h *serverHandle) handleAuthGitHub(w http.ResponseWriter, r *http.Request) {
+	state, err := auth.GenerateOAuthState(h.jwtSecret)
+	if err != nil {
+		http.Error(w, "failed to generate state", http.StatusInternalServerError)
+		return
+	}
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	redirectURI := fmt.Sprintf("%s://%s/auth/callback", scheme, r.Host)
+	redirectURL := fmt.Sprintf(
+		"https://github.com/login/oauth/authorize?client_id=%s&state=%s&scope=read:org&redirect_uri=%s",
+		h.githubClientID,
+		state,
+		redirectURI,
+	)
+	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+func (h *serverHandle) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	if err := auth.ValidateOAuthState(h.jwtSecret, state); err != nil {
+		http.Error(w, "invalid OAuth state", http.StatusBadRequest)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		http.Error(w, "missing code parameter", http.StatusBadRequest)
+		return
+	}
+
+	accessToken, err := auth.ExchangeCodeForToken(r.Context(), h.githubClientID, h.githubClientSecret, code)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to exchange GitHub code", slog.String("error", err.Error()))
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	// Check organization membership if an org is configured
+	if h.githubOrg != "" {
+		member, err := auth.CheckOrgMembership(r.Context(), accessToken, h.githubOrg)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to check org membership", slog.String("error", err.Error()))
+			http.Error(w, "authentication failed", http.StatusUnauthorized)
+			return
+		}
+		if !member {
+			http.Error(w, "Forbidden: not a member of the required organization", http.StatusForbidden)
+			return
+		}
+	}
+
+	username, err := auth.GetUsername(r.Context(), accessToken)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to get GitHub username", slog.String("error", err.Error()))
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	sessionToken, err := auth.IssueSessionToken(h.jwtSecret, username)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to issue session token", slog.String("error", err.Error()))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"token": sessionToken}) //nolint: errcheck,errchkjson
+	slog.InfoContext(r.Context(), "user authenticated", slog.String("username", username))
 }
 
 func (h *serverHandle) handleInternalChannels(w http.ResponseWriter, r *http.Request) {
@@ -370,6 +494,20 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing channel_id", http.StatusBadRequest)
 		return
 	}
+
+	// When auth is enabled, validate the channel JWT from the Authorization header
+	if len(h.jwtSecret) > 0 {
+		token := middlewares.BearerToken(r)
+		if token == "" {
+			http.Error(w, "Unauthorized: missing authorization token", http.StatusUnauthorized)
+			return
+		}
+		if err := auth.ValidateChannelToken(h.jwtSecret, token, channelID); err != nil {
+			http.Error(w, "Forbidden: invalid channel token", http.StatusForbidden)
+			return
+		}
+	}
+
 	activeChannelsMu.RLock()
 	clientConn, exists := activeChannels[channelID]
 	activeChannelsMu.RUnlock()

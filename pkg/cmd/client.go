@@ -27,6 +27,8 @@ type clientArgs struct {
 
 	insecure bool
 
+	token string
+
 	transferRequestTimeout        time.Duration
 	disableTransferRequestTimeout bool
 }
@@ -56,6 +58,7 @@ func clientCommand() *cobra.Command {
 	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
 	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
 	flag.BoolVar(&args.insecure, "insecure", false, "insecure skip verify")
+	flag.StringVar(&args.token, "token", "", "session JWT token for authentication (required when server has auth enabled)")
 	flag.DurationVar(
 		&args.transferRequestTimeout,
 		"transfer-request-timeout",
@@ -85,7 +88,7 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		websocketScheme = "wss"
 	}
 	// Have the server generate a channel_id
-	channelID, err := getNewChannel(args.serverURL)
+	channelID, channelToken, err := getNewChannel(args.serverURL, args.token)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve channel_id: %w", err)
 	}
@@ -103,8 +106,15 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		dialer.TLSClientConfig = tls
 	}
 	wsURL := fmt.Sprintf("%s://%s/ws/%s", websocketScheme, u.Host, channelID)
+
+	// Build WebSocket headers (include Authorization if a channel token was issued)
+	var wsHeaders http.Header
+	if channelToken != "" {
+		wsHeaders = http.Header{"Authorization": []string{"Bearer " + channelToken}}
+	}
+
 	conn, err := retry.Retry(ctx, func() (*websocket.Conn, error) {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, wsHeaders)
 		if err != nil {
 			return nil, fmt.Errorf("WebSocket connection failed: %w", err)
 		}
@@ -160,19 +170,30 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 	}
 }
 
-// getNewChannel hits the server's /new endpoint to retrieve the channel_id.
-func getNewChannel(serverURL string) (string, error) {
-	resp, err := http.Get(serverURL + "/new")
+// getNewChannel hits the server's /new endpoint to retrieve the channel_id and optional channel token.
+func getNewChannel(serverURL, sessionToken string) (string, string, error) {
+	req, err := http.NewRequest(http.MethodGet, serverURL+"/new", nil)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	if sessionToken != "" {
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("/new returned status %d", resp.StatusCode)
+	}
+
 	var result map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return result["channel_id"], nil
+	return result["channel_id"], result["token"], nil
 }
 
 // handleHTTPRequest reconstructs the received byte stream, sends it locally, and returns the result.

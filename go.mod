@@ -4,6 +4,7 @@ go 1.25.6
 
 require (
 	github.com/goccy/go-yaml v1.19.2
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/memberlist v0.5.4

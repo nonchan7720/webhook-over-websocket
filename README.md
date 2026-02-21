@@ -36,6 +36,8 @@ External Service → (HTTP) → Server /webhook/{channel_id}
 | `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments) |
 | `GET /ws/{channel_id}`             | WebSocket upgrade endpoint for client connections                                     |
 | `POST /webhook/{channel_id}[/...]` | Receives external webhook requests and tunnels them to the client                     |
+| `GET /auth/github`                 | *(auth mode only)* Redirects to the GitHub OAuth consent page                         |
+| `GET /auth/callback`               | *(auth mode only)* GitHub OAuth callback; returns a session JWT                       |
 
 ## Installation
 
@@ -73,13 +75,17 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 
 **Server flags:**
 
-| Flag                         | Default   | Description                                        |
-| ---------------------------- | --------- | -------------------------------------------------- |
-| `--port`, `-p`               | `8080`    | Port to listen on                                  |
-| `--peer-domain`              | *(empty)* | Peer domain name for memberlist cluster discovery  |
-| `--cleanup-duration`         | `5m`      | Interval for cleaning up inactive channel sessions |
-| `--memberlist-port`          | `7946`    | Port for memberlist gossip protocol                |
-| `--memberlist-sync-duration` | `5s`      | Interval for memberlist cluster synchronization    |
+| Flag                         | Default   | Description                                                            |
+| ---------------------------- | --------- | ---------------------------------------------------------------------- |
+| `--port`, `-p`               | `8080`    | Port to listen on                                                      |
+| `--peer-domain`              | *(empty)* | Peer domain name for memberlist cluster discovery                      |
+| `--cleanup-duration`         | `5m`      | Interval for cleaning up inactive channel sessions                     |
+| `--memberlist-port`          | `7946`    | Port for memberlist gossip protocol                                    |
+| `--memberlist-sync-duration` | `5s`      | Interval for memberlist cluster synchronization                        |
+| `--github-client-id`         | *(empty)* | GitHub OAuth App client ID — **enables authentication when set**       |
+| `--github-client-secret`     | *(empty)* | GitHub OAuth App client secret (required when `--github-client-id` is set) |
+| `--github-org`               | *(empty)* | Required GitHub organization — only members are allowed access         |
+| `--jwt-secret`               | *(empty)* | Secret key for signing JWT tokens (required when `--github-client-id` is set) |
 
 ### 2. Start the client
 
@@ -101,10 +107,12 @@ A tunnel to the server has been established.
 
 **Client flags:**
 
-| Flag           | Default                 | Description                                                 |
-| -------------- | ----------------------- | ----------------------------------------------------------- |
-| `--server-url` | *(required)*            | URL of the webhook-over-websocket server                    |
-| `--target-url` | `http://localhost:3000` | URL of the local application to forward webhook requests to |
+| Flag              | Default                 | Description                                                          |
+| ----------------- | ----------------------- | -------------------------------------------------------------------- |
+| `--server-url`    | *(required)*            | URL of the webhook-over-websocket server                             |
+| `--target-url`    | `http://localhost:3000` | URL of the local application to forward webhook requests to          |
+| `--token`         | *(empty)*               | Session JWT token for authentication (required when server auth is enabled) |
+| `--insecure`      | `false`                 | Skip TLS certificate verification                                    |
 
 ### 3. Configure the external service
 
@@ -116,7 +124,48 @@ http://your-server.example.com/webhook/<channel_id>
 
 Any path suffix after the channel ID is preserved and forwarded to your local application as-is.
 
-## Environment Variables
+## Authentication
+
+When the server is configured with a GitHub OAuth App, only authenticated users can obtain `channel_id`s and connect via WebSocket.  Two levels of access control are supported:
+
+1. **Organization check** – only members of a specific GitHub organization may authenticate (enabled via `--github-org`).
+2. **Per-channel token** – every `channel_id` is bound to a signed JWT whose `sub` (subject) claim equals the `channel_id`, so a token issued for one channel cannot be used for another.
+
+### Setup
+
+1. [Create a GitHub OAuth App](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) and set the callback URL to `http://your-server.example.com/auth/callback`.
+2. Start the server with the auth flags:
+
+```bash
+webhook-over-websocket server \
+  --port 8080 \
+  --github-client-id  <YOUR_CLIENT_ID> \
+  --github-client-secret <YOUR_CLIENT_SECRET> \
+  --github-org my-organization \
+  --jwt-secret  <A_LONG_RANDOM_STRING>
+```
+
+### Authentication flow
+
+| Step | Actor  | Action |
+| ---- | ------ | ------ |
+| 1    | User   | Open `http://your-server.example.com/auth/github` in a browser |
+| 2    | Server | Redirects to GitHub OAuth consent page |
+| 3    | GitHub | Redirects back to `/auth/callback` after the user approves |
+| 4    | Server | Verifies org membership (if `--github-org` is set), issues a **session JWT**, returns `{"token":"<session_jwt>"}` |
+| 5    | Client | Calls `webhook-over-websocket client --server-url … --token <session_jwt>` |
+| 6    | Server | `/new` accepts the session JWT, creates a `channel_id`, returns a **channel JWT** (`sub=channel_id`) |
+| 7    | Client | Connects to `/ws/<channel_id>` with `Authorization: Bearer <channel_jwt>` |
+| 8    | Server | Validates that the channel JWT's `sub` equals the requested `channel_id` |
+
+### New server endpoints (auth mode only)
+
+| Endpoint            | Description                                                          |
+| ------------------- | -------------------------------------------------------------------- |
+| `GET /auth/github`  | Redirects the user to the GitHub OAuth consent page                  |
+| `GET /auth/callback`| GitHub calls this after the user approves; returns the session JWT   |
+
+
 
 | Variable | Description                                                                                                                      |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
