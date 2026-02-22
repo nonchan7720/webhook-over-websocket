@@ -11,13 +11,17 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/retry"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -26,8 +30,6 @@ type clientArgs struct {
 	targetURL string
 
 	insecure bool
-
-	token string
 
 	transferRequestTimeout        time.Duration
 	disableTransferRequestTimeout bool
@@ -58,7 +60,6 @@ func clientCommand() *cobra.Command {
 	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
 	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
 	flag.BoolVar(&args.insecure, "insecure", false, "insecure skip verify")
-	flag.StringVar(&args.token, "token", "", "session JWT token for authentication (required when server has auth enabled)")
 	flag.DurationVar(
 		&args.transferRequestTimeout,
 		"transfer-request-timeout",
@@ -87,8 +88,14 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 	if isTLSConn {
 		websocketScheme = "wss"
 	}
+
+	token, err := authorization(args.serverURL)
+	if err != nil {
+		return fmt.Errorf("failed to authorization step: %w", err)
+	}
+
 	// Have the server generate a channel_id
-	channelID, channelToken, err := getNewChannel(args.serverURL, args.token)
+	channelID, err := getNewChannel(args.serverURL, token)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve channel_id: %w", err)
 	}
@@ -109,12 +116,12 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 
 	// Build WebSocket headers (include Authorization if a channel token was issued)
 	var wsHeaders http.Header
-	if channelToken != "" {
-		wsHeaders = http.Header{"Authorization": []string{"Bearer " + channelToken}}
+	if token != "" {
+		wsHeaders = http.Header{"Authorization": []string{"Bearer " + token}}
 	}
 
 	conn, err := retry.Retry(ctx, func() (*websocket.Conn, error) {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, wsHeaders)
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, wsHeaders)
 		if err != nil {
 			return nil, fmt.Errorf("WebSocket connection failed: %w", err)
 		}
@@ -171,29 +178,29 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 }
 
 // getNewChannel hits the server's /new endpoint to retrieve the channel_id and optional channel token.
-func getNewChannel(serverURL, sessionToken string) (string, string, error) {
+func getNewChannel(serverURL, token string) (string, error) {
 	req, err := http.NewRequest(http.MethodGet, serverURL+"/new", nil)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	if sessionToken != "" {
-		req.Header.Set("Authorization", "Bearer "+sessionToken)
+	if token != "" {
+		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("/new returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("/new returned status %d", resp.StatusCode)
 	}
 
 	var result map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", err
+		return "", err
 	}
-	return result["channel_id"], result["token"], nil
+	return result["channel_id"], nil
 }
 
 // handleHTTPRequest reconstructs the received byte stream, sends it locally, and returns the result.
@@ -272,4 +279,49 @@ func sendErrorResponse(reqID string, wsConn *websocket.Conn, wsMutex *sync.Mutex
 	wsMutex.Lock()
 	_ = wsConn.WriteJSON(msg) //nolint: errcheck
 	wsMutex.Unlock()
+}
+
+func authorization(serverURL string) (string, error) {
+	sessionID := fmt.Sprintf("sess_%s", uuid.NewString())
+	tokenChan := make(chan string)
+	sessionWaitURL := fmt.Sprintf("%s/auth/client?session_id=%s", serverURL, sessionID)
+	req, err := http.NewRequest(http.MethodGet, sessionWaitURL, nil)
+	if err != nil {
+		return "", err
+	}
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Printf("サーバーへの接続に失敗しました: %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close() //nolint: errcheck
+
+		if resp.StatusCode == http.StatusNotFound {
+			tokenChan <- ""
+		}
+
+		// Read the SSE stream
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			// "data: <token>" format
+			if strings.HasPrefix(line, "data: ") {
+				token := strings.TrimPrefix(line, "data: ")
+				tokenChan <- token
+				return // When the token is received, terminate the goroutine.
+			}
+		}
+	}()
+
+	// Wait a moment for the server-side connection to be established (to ensure reliable processing).
+	time.Sleep(500 * time.Millisecond)
+	loginURL := fmt.Sprintf("%s/auth/login?session_id=%s", serverURL, sessionID)
+	if err := utils.OpenBrowser(loginURL); err != nil {
+		fmt.Printf("ブラウザを開いてログインを完了させてください...: %s\n", loginURL)
+	}
+
+	// Wait for tokens to be pushed via SSE (blocked here)
+	token := <-tokenChan
+	return token, nil
 }
