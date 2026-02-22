@@ -12,12 +12,11 @@ WebSocket を介して外部の Webhook リクエストをローカル開発サ�
 
 `webhook-over-websocket` を使うと、ローカルマシンをインターネットに直接公開することなく、外部サービス（GitHub、Stripe、Slack など）からの Webhook をローカル開発環境で受け取ることができます。公開アクセス可能なサーバーとローカルで動作するクライアントの間に永続的な WebSocket 接続を確立することで実現します。
 
-```
-外部サービス → (HTTP) → サーバー /webhook/{channel_id}
-                                 ↕ WebSocket
-                             クライアント（ローカルマシン）
-                                 ↓ (HTTP)
-                          ローカルアプリケーション（例: http://localhost:3000）
+```mermaid
+flowchart TD
+    A[外部サービス] -- HTTP --> B["サーバー<br>/webhook/{channel_id}"]
+    B <-->|WebSocket| C[クライアント<br>（ローカルマシン）]
+    C -- HTTP --> D["ローカルアプリケーション<br>（例: http://localhost:3000）"]
 ```
 
 ## アーキテクチャ

@@ -12,12 +12,11 @@ A tunnel tool that forwards external webhook requests to a local development ser
 
 `webhook-over-websocket` allows you to receive webhooks from external services (e.g. GitHub, Stripe, Slack) on your local development machine without exposing it to the internet directly. It works by establishing a persistent WebSocket connection between a publicly accessible server and the client running locally.
 
-```
-External Service → (HTTP) → Server /webhook/{channel_id}
-                                 ↕ WebSocket
-                             Client (local machine)
-                                 ↓ (HTTP)
-                          Local application (e.g. http://localhost:3000)
+```mermaid
+flowchart TD
+    A[External Service] -- HTTP --> B["Server<br>/webhook/{channel_id}"]
+    B <-->|WebSocket| C["Client<br>(local machine)"]
+    C -- HTTP --> D["Local application<br>(e.g. http://localhost:3000)"]
 ```
 
 ## Architecture
