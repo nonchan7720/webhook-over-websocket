@@ -36,7 +36,7 @@ External Service → (HTTP) → Server /webhook/{channel_id}
 | `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments) |
 | `GET /ws/{channel_id}`             | WebSocket upgrade endpoint for client connections                                     |
 | `POST /webhook/{channel_id}[/...]` | Receives external webhook requests and tunnels them to the client                     |
-| `GET /auth/github`                 | *(auth mode only)* Redirects to the GitHub OAuth consent page                         |
+| `GET /auth/login`                 | *(auth mode only)* Redirects to the GitHub OAuth consent page                         |
 | `GET /auth/callback`               | *(auth mode only)* GitHub OAuth callback; returns a session JWT                       |
 
 ## Installation
@@ -85,7 +85,7 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 | `--github-client-id`         | *(empty)* | GitHub OAuth App client ID — **enables authentication when set**       |
 | `--github-client-secret`     | *(empty)* | GitHub OAuth App client secret (required when `--github-client-id` is set) |
 | `--github-org`               | *(empty)* | Required GitHub organization — only members are allowed access         |
-| `--jwt-secret`               | *(empty)* | Secret key for signing JWT tokens (required when `--github-client-id` is set) |
+| `--jwt-signing-key`               | *(empty)* | Secret key for signing JWT tokens (required when `--github-client-id` is set) |
 
 ### 2. Start the client
 
@@ -144,19 +144,6 @@ webhook-over-websocket server \
   --github-org my-organization \
   --jwt-secret  <A_LONG_RANDOM_STRING>
 ```
-
-### Authentication flow
-
-| Step | Actor  | Action |
-| ---- | ------ | ------ |
-| 1    | User   | Open `http://your-server.example.com/auth/github` in a browser |
-| 2    | Server | Redirects to GitHub OAuth consent page |
-| 3    | GitHub | Redirects back to `/auth/callback` after the user approves |
-| 4    | Server | Verifies org membership (if `--github-org` is set), issues a **session JWT**, returns `{"token":"<session_jwt>"}` |
-| 5    | Client | Calls `webhook-over-websocket client --server-url … --token <session_jwt>` |
-| 6    | Server | `/new` accepts the session JWT, creates a `channel_id`, returns a **channel JWT** (`sub=channel_id`) |
-| 7    | Client | Connects to `/ws/<channel_id>` with `Authorization: Bearer <channel_jwt>` |
-| 8    | Server | Validates that the channel JWT's `sub` equals the requested `channel_id` |
 
 ### New server endpoints (auth mode only)
 

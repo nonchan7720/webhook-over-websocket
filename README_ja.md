@@ -36,7 +36,7 @@ WebSocket を介して外部の Webhook リクエストをローカル開発サ�
 | `GET /internal/channels`           | アクティブなチャンネル一覧を返します（マルチレプリカ構成でのピア間同期に使用）                    |
 | `GET /ws/{channel_id}`             | クライアント接続用の WebSocket アップグレードエンドポイント                                        |
 | `POST /webhook/{channel_id}[/...]` | 外部からの Webhook リクエストを受け取り、クライアントにトンネリングします                          |
-| `GET /auth/github`                 | *(認証モード限定)* GitHub OAuth の同意ページへリダイレクトします                                   |
+| `GET /auth/login`                 | *(認証モード限定)* GitHub OAuth の同意ページへリダイレクトします                                   |
 | `GET /auth/callback`               | *(認証モード限定)* GitHub OAuth コールバック。セッション JWT を返します                            |
 
 ## インストール
@@ -142,21 +142,8 @@ webhook-over-websocket server \
   --github-client-id  <YOUR_CLIENT_ID> \
   --github-client-secret <YOUR_CLIENT_SECRET> \
   --github-org my-organization \
-  --jwt-secret  <ランダムな長い文字列>
+  --jwt-signing-key  <ランダムな長い文字列>
 ```
-
-### 認証フロー
-
-| ステップ | アクター | アクション |
-| -------- | -------- | ---------- |
-| 1        | ユーザー | ブラウザで `http://your-server.example.com/auth/github` を開く |
-| 2        | サーバー | GitHub OAuth 同意ページへリダイレクト |
-| 3        | GitHub   | ユーザーが承認後、`/auth/callback` へリダイレクト |
-| 4        | サーバー | 組織メンバーシップを確認（`--github-org` 設定時）し、**セッション JWT** を発行して `{"token":"<session_jwt>"}` を返す |
-| 5        | クライアント | `webhook-over-websocket client --server-url … --token <session_jwt>` を実行 |
-| 6        | サーバー | `/new` でセッション JWT を検証後、`channel_id` を作成し **チャンネル JWT**（`sub=channel_id`）を発行して返す |
-| 7        | クライアント | `Authorization: Bearer <channel_jwt>` ヘッダーで `/ws/<channel_id>` に接続 |
-| 8        | サーバー | チャンネル JWT の `sub` が要求された `channel_id` と一致するか検証 |
 
 ## 環境変数
 
