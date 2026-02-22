@@ -89,7 +89,7 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 		websocketScheme = "wss"
 	}
 
-	token, err := authorization(args.serverURL)
+	token, err := authorization(ctx, args.serverURL)
 	if err != nil {
 		return fmt.Errorf("failed to authorization step: %w", err)
 	}
@@ -281,9 +281,10 @@ func sendErrorResponse(reqID string, wsConn *websocket.Conn, wsMutex *sync.Mutex
 	wsMutex.Unlock()
 }
 
-func authorization(serverURL string) (string, error) {
+func authorization(ctx context.Context, serverURL string) (string, error) {
 	sessionID := fmt.Sprintf("sess_%s", uuid.NewString())
-	tokenChan := make(chan string)
+	tokenChan := make(chan string, 1)
+	isAuthCh := make(chan bool, 1)
 	sessionWaitURL := fmt.Sprintf("%s/auth/client?session_id=%s", serverURL, sessionID)
 	req, err := http.NewRequest(http.MethodGet, sessionWaitURL, nil)
 	if err != nil {
@@ -298,16 +299,17 @@ func authorization(serverURL string) (string, error) {
 		defer resp.Body.Close() //nolint: errcheck
 
 		if resp.StatusCode == http.StatusNotFound {
-			tokenChan <- ""
+			isAuthCh <- false
+			return
 		}
-
+		isAuthCh <- true
 		// Read the SSE stream
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
 			// "data: <token>" format
-			if strings.HasPrefix(line, "data: ") {
-				token := strings.TrimPrefix(line, "data: ")
+			if after, ok := strings.CutPrefix(line, "data: "); ok {
+				token := after
 				tokenChan <- token
 				return // When the token is received, terminate the goroutine.
 			}
@@ -316,12 +318,19 @@ func authorization(serverURL string) (string, error) {
 
 	// Wait a moment for the server-side connection to be established (to ensure reliable processing).
 	time.Sleep(500 * time.Millisecond)
-	loginURL := fmt.Sprintf("%s/auth/login?session_id=%s", serverURL, sessionID)
-	if err := utils.OpenBrowser(loginURL); err != nil {
-		fmt.Printf("ブラウザを開いてログインを完了させてください...: %s\n", loginURL)
+	isAuth := <-isAuthCh
+	if isAuth {
+		loginURL := fmt.Sprintf("%s/auth/login?session_id=%s", serverURL, sessionID)
+		if err := utils.OpenBrowser(loginURL); err != nil {
+			fmt.Printf("ブラウザを開いてログインを完了させてください...: %s\n", loginURL)
+		}
+		select {
+		case token := <-tokenChan:
+			return token, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	} else {
+		return "", nil
 	}
-
-	// Wait for tokens to be pushed via SSE (blocked here)
-	token := <-tokenChan
-	return token, nil
 }
