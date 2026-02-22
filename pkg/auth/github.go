@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,24 @@ import (
 )
 
 const (
-	githubTokenURL = "https://github.com/login/oauth/access_token"
+	githubAuthURL  = "https://github.com/login/oauth/authorize"
+	githubTokenURL = "https://github.com/login/oauth/access_token" //nolint: gosec
 	githubUserURL  = "https://api.github.com/user"
 	githubOrgURL   = "https://api.github.com/user/orgs"
 )
+
+func GithubAuthURL(clientID, state, redirectURI string, isOrg bool) string {
+	redirectURL, _ := url.Parse(githubAuthURL) //nolint: errcheck
+	q := redirectURL.Query()
+	q.Add("client_id", clientID)
+	q.Add("state", state)
+	q.Add("redirect_uri", redirectURI)
+	if isOrg {
+		q.Add("scope", "read:org")
+	}
+	redirectURL.RawQuery = q.Encode()
+	return redirectURL.String()
+}
 
 // ExchangeCodeForToken exchanges a GitHub OAuth code for an access token.
 func ExchangeCodeForToken(ctx context.Context, clientID, clientSecret, code string) (string, error) {
@@ -68,12 +83,15 @@ func GetUsername(ctx context.Context, accessToken string) (string, error) {
 	}
 
 	var user struct {
-		Login string `json:"login"`
+		ID int64 `json:"id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return "", fmt.Errorf("failed to decode user response: %w", err)
 	}
-	return user.Login, nil
+	sha := sha256.New()
+	_, _ = fmt.Fprintf(sha, "%d", user.ID) //nolint:errcheck
+	val := sha.Sum(nil)
+	return string(val), nil
 }
 
 // CheckOrgMembership returns true if the authenticated user belongs to the given organization.
