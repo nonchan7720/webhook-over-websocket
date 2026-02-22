@@ -7,8 +7,7 @@ import (
 	"github.com/nonchan7720/webhook-over-websocket/pkg/auth"
 )
 
-// BearerToken extracts the Bearer token from the Authorization header.
-func BearerToken(r *http.Request) string {
+func bearerToken(r *http.Request) string {
 	v := r.Header.Get("Authorization")
 	if !strings.HasPrefix(v, "Bearer ") {
 		return ""
@@ -20,16 +19,17 @@ func BearerToken(r *http.Request) string {
 func JWTSession(secret []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := BearerToken(r)
+			token := bearerToken(r)
 			if token == "" {
 				http.Error(w, "Unauthorized: missing authorization token", http.StatusUnauthorized)
 				return
 			}
 			claims, err := auth.ParseToken(secret, token)
-			if err != nil || claims.TokenType != auth.TokenTypeSession {
+			if err != nil {
 				http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
 				return
 			}
+			*r = *r.WithContext(auth.FromContextKey(r.Context(), claims))
 			next.ServeHTTP(w, r)
 		})
 	}
