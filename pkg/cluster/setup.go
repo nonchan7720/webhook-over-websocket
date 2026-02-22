@@ -25,11 +25,18 @@ func Config(port int, myIP string) *memberlist.Config {
 	return mConfig
 }
 
-func SetUp(port int, myIP string) (*Memberlist, error) {
+func SetUp(port int, myIP string, notifyMsgFn NotifyMsgFn) (*Memberlist, error) {
 	mConfig := Config(port, myIP)
 	mlist, err := memberlist.Create(mConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create memberlist: %w", err)
+	}
+	if notifyMsgFn != nil {
+		mConfig.Delegate = &clusterDelegate{CallbackNotifyMsg: notifyMsgFn}
+		broadcastQueue = &memberlist.TransmitLimitedQueue{
+			NumNodes:       func() int { return mlist.NumMembers() },
+			RetransmitMult: mConfig.RetransmitMult,
+		}
 	}
 	return &Memberlist{mlist: mlist, myIP: myIP}, nil
 }

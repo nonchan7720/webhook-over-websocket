@@ -12,12 +12,11 @@ WebSocket を介して外部の Webhook リクエストをローカル開発サ�
 
 `webhook-over-websocket` を使うと、ローカルマシンをインターネットに直接公開することなく、外部サービス（GitHub、Stripe、Slack など）からの Webhook をローカル開発環境で受け取ることができます。公開アクセス可能なサーバーとローカルで動作するクライアントの間に永続的な WebSocket 接続を確立することで実現します。
 
-```
-外部サービス → (HTTP) → サーバー /webhook/{channel_id}
-                                 ↕ WebSocket
-                             クライアント（ローカルマシン）
-                                 ↓ (HTTP)
-                          ローカルアプリケーション（例: http://localhost:3000）
+```mermaid
+flowchart TD
+    A[外部サービス] -- HTTP --> B["サーバー<br>/webhook/{channel_id}"]
+    B <-->|WebSocket| C[クライアント<br>（ローカルマシン）]
+    C -- HTTP --> D["ローカルアプリケーション<br>（例: http://localhost:3000）"]
 ```
 
 ## アーキテクチャ
@@ -36,6 +35,8 @@ WebSocket を介して外部の Webhook リクエストをローカル開発サ�
 | `GET /internal/channels`           | アクティブなチャンネル一覧を返します（マルチレプリカ構成でのピア間同期に使用）                    |
 | `GET /ws/{channel_id}`             | クライアント接続用の WebSocket アップグレードエンドポイント                                        |
 | `POST /webhook/{channel_id}[/...]` | 外部からの Webhook リクエストを受け取り、クライアントにトンネリングします                          |
+| `GET /auth/login`                 | *(認証モード限定)* GitHub OAuth の同意ページへリダイレクトします                                   |
+| `GET /auth/callback`               | *(認証モード限定)* GitHub OAuth コールバック。セッション JWT を返します                            |
 
 ## インストール
 
@@ -73,13 +74,17 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 
 **サーバーフラグ:**
 
-| フラグ                         | デフォルト | 説明                                                   |
-| ------------------------------ | ---------- | ------------------------------------------------------ |
-| `--port`, `-p`                 | `8080`     | リッスンするポート番号                                  |
-| `--peer-domain`                | *(空)*     | memberlist クラスター探索用のピアドメイン名             |
-| `--cleanup-duration`           | `5m`       | 非アクティブなチャンネルセッションのクリーンアップ間隔  |
-| `--memberlist-port`            | `7946`     | memberlist ゴシッププロトコル用ポート                   |
-| `--memberlist-sync-duration`   | `5s`       | memberlist クラスター同期の間隔                         |
+| フラグ                         | デフォルト | 説明                                                                                    |
+| ------------------------------ | ---------- | --------------------------------------------------------------------------------------- |
+| `--port`, `-p`                 | `8080`     | リッスンするポート番号                                                                   |
+| `--peer-domain`                | *(空)*     | memberlist クラスター探索用のピアドメイン名                                              |
+| `--cleanup-duration`           | `5m`       | 非アクティブなチャンネルセッションのクリーンアップ間隔                                   |
+| `--memberlist-port`            | `7946`     | memberlist ゴシッププロトコル用ポート                                                    |
+| `--memberlist-sync-duration`   | `5s`       | memberlist クラスター同期の間隔                                                          |
+| `--github-client-id`           | *(空)*     | GitHub OAuth App のクライアント ID — **設定すると認証が有効になります**                  |
+| `--github-client-secret`       | *(空)*     | GitHub OAuth App のクライアントシークレット（`--github-client-id` 設定時は必須）         |
+| `--github-org`                 | *(空)*     | アクセスを許可する GitHub 組織名（省略時は組織チェックなし）                             |
+| `--jwt-secret`                 | *(空)*     | JWT トークン署名用のシークレットキー（`--github-client-id` 設定時は必須）                |
 
 ### 2. クライアントを起動する
 
@@ -101,10 +106,12 @@ A tunnel to the server has been established.
 
 **クライアントフラグ:**
 
-| フラグ           | デフォルト              | 説明                                                        |
-| ---------------- | ----------------------- | ----------------------------------------------------------- |
-| `--server-url`   | *(必須)*                | webhook-over-websocket サーバーの URL                        |
-| `--target-url`   | `http://localhost:3000` | Webhook リクエストを転送するローカルアプリケーションの URL   |
+| フラグ           | デフォルト              | 説明                                                                        |
+| ---------------- | ----------------------- | --------------------------------------------------------------------------- |
+| `--server-url`   | *(必須)*                | webhook-over-websocket サーバーの URL                                        |
+| `--target-url`   | `http://localhost:3000` | Webhook リクエストを転送するローカルアプリケーションの URL                   |
+| `--token`        | *(空)*                  | 認証用セッション JWT トークン（サーバーで認証が有効な場合に必須）            |
+| `--insecure`     | `false`                 | TLS 証明書の検証をスキップします                                             |
 
 ### 3. 外部サービスを設定する
 
@@ -115,6 +122,27 @@ http://your-server.example.com/webhook/<channel_id>
 ```
 
 チャンネル ID 以降のパスサフィックスはそのままローカルアプリケーションへ転送されます。
+
+## 認証
+
+サーバーを GitHub OAuth App で設定した場合、認証済みのユーザーのみが `channel_id` を取得して WebSocket で接続できるようになります。2 段階のアクセス制御が提供されます：
+
+1. **組織チェック** – 特定の GitHub 組織のメンバーのみが認証可能（`--github-org` で設定）。
+2. **チャンネルトークン** – 各 `channel_id` は、`sub`（Subject）クレームに `channel_id` を含む署名付き JWT に紐づけられます。あるチャンネル向けに発行されたトークンは他のチャンネルには使用できません。
+
+### セットアップ
+
+1. [GitHub OAuth App を作成](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)し、コールバック URL を `http://your-server.example.com/auth/callback` に設定します。
+2. 認証フラグを付けてサーバーを起動します：
+
+```bash
+webhook-over-websocket server \
+  --port 8080 \
+  --github-client-id  <YOUR_CLIENT_ID> \
+  --github-client-secret <YOUR_CLIENT_SECRET> \
+  --github-org my-organization \
+  --jwt-signing-key  <ランダムな長い文字列>
+```
 
 ## 環境変数
 
