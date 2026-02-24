@@ -49,13 +49,19 @@ func serverCommand() *cobra.Command {
 }
 
 func executeServer(ctx context.Context, args *serverArgs) error {
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
+	serverCtx, serverCancel := context.WithCancel(ctx)
+	defer serverCancel()
+
 	handler := &serverHandle{
 		peerDomain:  args.peerDomain,
 		myServerURL: fmt.Sprintf("http://%s:%d", myIP, args.port),
 		port:        args.port,
+		serverCtx:   serverCtx,
 	}
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", args.port))
 	if err != nil {
 		return err
@@ -96,6 +102,12 @@ func executeServer(ctx context.Context, args *serverArgs) error {
 	}()
 
 	<-ctx.Done()
+	slog.Info("Shutting down server...")
+
+	// すべてのWebSocket接続にシャットダウンを通知
+	serverCancel()
+
+	// 少し待ってから強制終了
 	tCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	slog.InfoContext(tCtx, "Stop server")
 	defer cancel()
@@ -159,6 +171,8 @@ type serverHandle struct {
 	myServerURL string
 	peerDomain  string
 	port        int
+
+	serverCtx context.Context
 }
 
 // /internal/channels: 自分が保持しているチャネル(UUID)一覧を返す
@@ -305,7 +319,7 @@ func fetchPeerChannels(hostPort string, ch chan<- InternalChannelsResp, wg *sync
 }
 
 // /ws/{channel_id}: クライアントからのWebSocket接続
-func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) { //nolint: gocognit,cyclop
 	channelID := r.PathValue("channelId")
 	if channelID == "" {
 		http.Error(w, "Missing channel_id", http.StatusBadRequest)
@@ -348,6 +362,14 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info(fmt.Sprintf("Client connected: %s", channelID))
 
+	// Set the handler for Ping/Pong processing
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // nolint: errcheck
+		return nil
+	})
+	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // nolint: errcheck
+
+	done := make(chan struct{})
 	defer func() {
 		activeChannelsMu.Lock()
 		delete(activeChannels, channelID)
@@ -356,31 +378,67 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID))
 	}()
 
-	// WebSocketからクライアントのレスポンスを受信するループ
-	for {
-		msgType, payload, err := conn.ReadMessage()
-		if err != nil {
-			break // 切断
+	// Goroutine that periodically sends pings
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				clientConn.mu.Lock()
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					clientConn.mu.Unlock()
+					return
+				}
+				clientConn.mu.Unlock()
+			case <-done:
+				return
+			}
 		}
+	}()
 
-		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
-			continue // 制御フレームなどはスキップ
+	// Goroutine receiving client responses from WebSocket
+	go func() {
+		defer close(done)
+		for {
+			msgType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+
+			if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
+				continue
+			}
+
+			var msg TunnelMessage
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				slog.Warn("Failed to unmarshal tunnel message", slog.String("error", err.Error()))
+				continue
+			}
+
+			// 該当するReqIDで待機しているハンドラにレスポンスを渡す
+			pendingMu.RLock()
+			respCh, exists := pendingRequests[msg.ReqID]
+			pendingMu.RUnlock()
+
+			if exists {
+				respCh <- msg.Payload
+			}
 		}
+	}()
 
-		var msg TunnelMessage
-		if err := json.Unmarshal(payload, &msg); err != nil {
-			slog.Warn("Failed to unmarshal tunnel message", slog.String("error", err.Error()))
-			continue
-		}
-
-		// 該当するReqIDで待機しているハンドラにレスポンスを渡す
-		pendingMu.RLock()
-		respCh, exists := pendingRequests[msg.ReqID]
-		pendingMu.RUnlock()
-
-		if exists {
-			respCh <- msg.Payload
-		}
+	// goroutineの終了またはシャットダウンを待つ
+	select {
+	case <-done:
+		// 正常な切断
+	case <-h.serverCtx.Done():
+		// サーバーシャットダウン
+		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID))
+		_ = conn.WriteMessage( //nolint: errcheck
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server is shutting down"),
+		)
+		_ = conn.Close() //nolint: errcheck
 	}
 }
 

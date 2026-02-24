@@ -56,7 +56,7 @@ func clientCommand() *cobra.Command {
 	return cmd
 }
 
-func executeClient(ctx context.Context, args *clientArgs) error {
+func executeClient(ctx context.Context, args *clientArgs) error { //nolint: gocognit,cyclop
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	u, err := url.Parse(args.serverURL)
@@ -96,37 +96,99 @@ func executeClient(ctx context.Context, args *clientArgs) error {
 
 	var wsMutex sync.Mutex
 
-	// contextキャンセル時にWebSocketを閉じる
+	// Set the handler for Ping/Pong processing
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // nolint: errcheck
+		return nil
+	})
+	conn.SetPingHandler(func(appData string) error {
+		wsMutex.Lock()
+		err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
+		wsMutex.Unlock()
+		if err != nil {
+			return err
+		}
+		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	})
+	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // nolint: errcheck
+
+	done := make(chan struct{})
+
+	// Properly close WebSockets when canceling the context
 	go func() {
 		<-ctx.Done()
 		slog.Info("Shutting down client...")
+		wsMutex.Lock()
+		_ = conn.WriteMessage( //nolint: errcheck
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Client is shutting down"),
+		)
+		wsMutex.Unlock()
 		_ = conn.Close() //nolint: errcheck
 	}()
 
-	// 3. メッセージ受信ループ
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("Context cancelled, exiting...")
-			return ctx.Err()
-		default:
-		}
-
-		var msg TunnelMessage
-		err := conn.ReadJSON(&msg)
-		if err != nil {
+	// A goroutine that periodically sends pings
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
 			select {
+			case <-ticker.C:
+				wsMutex.Lock()
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					wsMutex.Unlock()
+					return
+				}
+				wsMutex.Unlock()
+			case <-done:
+				return
 			case <-ctx.Done():
-				slog.Info("Context cancelled during read")
-				return ctx.Err()
-			default:
-				slog.Error(fmt.Sprintf("WebSocket Disconnection: %v", err))
-				return err
+				return
 			}
 		}
+	}()
 
-		// リクエストごとに並行処理でローカルへフォワード
-		go handleHTTPRequest(ctx, msg, conn, &wsMutex, args.targetURL)
+	// Execute the message reception loop in a goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(done)
+		for {
+			var msg TunnelMessage
+			err := conn.ReadJSON(&msg)
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					// When canceled, it exits normally.
+					errCh <- ctx.Err()
+				default:
+					slog.Error(fmt.Sprintf("WebSocket Disconnection: %v", err))
+					errCh <- err
+				}
+				return
+			}
+
+			// Forward each request to the local server in parallel processing
+			go handleHTTPRequest(ctx, msg, conn, &wsMutex, args.targetURL)
+		}
+	}()
+
+	// Waiting for completion
+	select {
+	case err := <-errCh:
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			slog.Info("Client shutdown completed")
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		slog.Info("Context cancelled, waiting for cleanup...")
+		// Wait for termination from errCh
+		select {
+		case <-errCh:
+		case <-time.After(5 * time.Second):
+			slog.Warn("Cleanup timeout")
+		}
+		return nil
 	}
 }
 
