@@ -232,7 +232,6 @@ func handleHTTPRequest(
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
-	req.URL = target
 	req.URL.Scheme = target.Scheme
 	req.URL.Host = target.Host
 	req.Host = target.Host
