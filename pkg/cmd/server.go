@@ -43,6 +43,7 @@ type serverHandle struct {
 	myServerURL string
 	peerDomain  string
 	port        int
+	serverCtx   context.Context
 
 	mlist *cluster.Memberlist
 
@@ -108,6 +109,8 @@ func serverCommand() *cobra.Command {
 func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyclop
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	serverCtx, serverCancel := context.WithCancel(ctx)
+	defer serverCancel()
 
 	// Validate auth configuration
 	if err := args.Validate(); err != nil {
@@ -126,6 +129,7 @@ func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyc
 		peerDomain:  args.PeerDomain,
 		myServerURL: fmt.Sprintf("http://%s:%d", myIP, args.Port),
 		port:        args.Port,
+		serverCtx:   serverCtx,
 
 		authEnabled:        authEnabled,
 		jwtSecret:          []byte(args.JwtSigningKey),
@@ -202,6 +206,12 @@ func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyc
 	}()
 
 	<-ctx.Done()
+	slog.Info("Shutting down server...")
+
+	// Notify all WebSocket connections of shutdown
+	serverCancel()
+
+	// Wait a moment, then force quit.
 	tCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	slog.InfoContext(tCtx, "Stop server")
 	defer cancel()
@@ -215,7 +225,7 @@ type TunnelMessage struct {
 
 type ClientConn struct {
 	wsConn *websocket.Conn
-	mu     sync.Mutex // WebSocketの同時書き込みを防ぐため
+	mu     sync.Mutex // To prevent simultaneous writes to WebSocket
 
 	subject string
 }
@@ -376,9 +386,9 @@ func (h *serverHandle) handleInternalChannels(w http.ResponseWriter, r *http.Req
 
 	h.activeChannelsMu.RLock()
 	for id, client := range h.activeChannels {
-		// WS用のルーターは未接続（発行済み）でも作成する
+		// Create a router for WS even if it is not connected (already issued).
 		wsChannels = append(wsChannels, id)
-		// Webhook用のルーターは実際に接続済み（isActive）の時のみ作成する
+		// Create a router for webhooks only when it is actually connected (isActive).
 		if client.isActive() {
 			webhookChannels = append(webhookChannels, id)
 		}
@@ -509,7 +519,7 @@ func fetchPeerChannels(hostPort string, ch chan<- InternalChannelsResp, wg *sync
 	}
 }
 
-func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) { //nolint: gocognit,cyclop
 	channelID := r.PathValue("channelId")
 	if channelID == "" {
 		http.Error(w, "Missing channel_id", http.StatusBadRequest)
@@ -564,6 +574,14 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info(fmt.Sprintf("Client connected: %s", channelID))
 
+	// Set the handler for Ping/Pong processing
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // nolint: errcheck
+		return nil
+	})
+	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // nolint: errcheck
+
+	done := make(chan struct{})
 	defer func() {
 		h.activeChannelsMu.Lock()
 		delete(h.activeChannels, channelID)
@@ -572,31 +590,67 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID))
 	}()
 
-	// Loop to receive client responses from WebSocket
-	for {
-		msgType, payload, err := conn.ReadMessage()
-		if err != nil {
-			break
+	// Goroutine that periodically sends pings
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				clientConn.mu.Lock()
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					clientConn.mu.Unlock()
+					return
+				}
+				clientConn.mu.Unlock()
+			case <-done:
+				return
+			}
 		}
+	}()
 
-		if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
-			continue
+	// Goroutine receiving client responses from WebSocket
+	go func() {
+		defer close(done)
+		for {
+			msgType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+
+			if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
+				continue
+			}
+
+			var msg TunnelMessage
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				slog.Warn("Failed to unmarshal tunnel message", slog.String("error", err.Error()))
+				continue
+			}
+
+			// Pass the response to the handler waiting for the corresponding ReqID
+			h.pendingMu.RLock()
+			respCh, exists := h.pendingRequests[msg.ReqID]
+			h.pendingMu.RUnlock()
+
+			if exists {
+				respCh <- msg.Payload
+			}
 		}
+	}()
 
-		var msg TunnelMessage
-		if err := json.Unmarshal(payload, &msg); err != nil {
-			slog.Warn("Failed to unmarshal tunnel message", slog.String("error", err.Error()))
-			continue
-		}
-
-		// Pass the response to the handler waiting for the corresponding ReqID
-		h.pendingMu.RLock()
-		respCh, exists := h.pendingRequests[msg.ReqID]
-		h.pendingMu.RUnlock()
-
-		if exists {
-			respCh <- msg.Payload
-		}
+	// Wait for a goroutine to terminate or for shutdown
+	select {
+	case <-done:
+		// Normal disconnection
+	case <-h.serverCtx.Done():
+		// Server Shutdown
+		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID))
+		_ = conn.WriteMessage( //nolint: errcheck
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server is shutting down"),
+		)
+		_ = conn.Close() //nolint: errcheck
 	}
 }
 
@@ -669,7 +723,6 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 const localhost = "127.0.0.1"
 
 func getLocalIP() string {
-	// K8s環境: 環境変数からPod IPを取得
 	if podIP := getLocalIPFromPOD_IPEnv(); podIP != "" {
 		return podIP
 	}
@@ -701,7 +754,6 @@ func getCandidateIP() string { //nolint: gocognit
 	preferredNames := []string{"eth0", "ens", "enp"}
 
 	for _, iface := range interfaces {
-		// スキップ: ダウンしているインターフェース、ループバック
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
@@ -715,7 +767,7 @@ func getCandidateIP() string { //nolint: gocognit
 			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
 				ip := ipnet.IP.String()
 
-				// 優先インターフェース名にマッチする場合は即座に返す
+				// If it matches the priority interface name, return immediately.
 				for _, prefix := range preferredNames {
 					if len(iface.Name) >= len(prefix) && iface.Name[:len(prefix)] == prefix {
 						slog.Info(fmt.Sprintf("Using IP from %s: %s", iface.Name, ip))
@@ -723,7 +775,7 @@ func getCandidateIP() string { //nolint: gocognit
 					}
 				}
 
-				// 候補として保持
+				// Keep as a candidate
 				if candidateIP == "" {
 					candidateIP = ip
 				}
@@ -740,14 +792,14 @@ func getCandidateIP() string { //nolint: gocognit
 }
 
 func (h *serverHandle) cleanNonActiveSession() {
-	h.activeChannelsMu.RLock() // 【修正】並行アクセス(panic)を防ぐため RLock を追加
+	h.activeChannelsMu.RLock()
 	nonActiveSession := make([]string, 0, len(h.activeChannels))
 	for id, client := range h.activeChannels {
 		if !client.isActive() {
 			nonActiveSession = append(nonActiveSession, id)
 		}
 	}
-	h.activeChannelsMu.RUnlock() // 読み取り完了後にロック解除
+	h.activeChannelsMu.RUnlock()
 	if len(nonActiveSession) == 0 {
 		return
 	}
