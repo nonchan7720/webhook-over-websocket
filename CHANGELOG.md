@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.1...v1.2.2) (2026-02-24)
+
+
+### Bug Fixes
+
+* request url merge query ([#37](https://github.com/nonchan7720/webhook-over-websocket/issues/37)) ([2c80cd7](https://github.com/nonchan7720/webhook-over-websocket/commit/2c80cd7776d5fc85f7b344f66ce2d1540faba903))
+
 ## [1.2.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.0...v1.2.1) (2026-02-24)
 
 
