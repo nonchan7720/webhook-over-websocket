@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.2...v1.2.3) (2026-02-24)
+
+
+### Bug Fixes
+
+* ping/pong ([#39](https://github.com/nonchan7720/webhook-over-websocket/issues/39)) ([97f876b](https://github.com/nonchan7720/webhook-over-websocket/commit/97f876b4c602c9a3ce86f1a11ee2dbf1c8ce818c))
+
 ## [1.2.2](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.1...v1.2.2) (2026-02-24)
 
 
