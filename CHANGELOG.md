@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.3.0...v1.4.0) (2026-02-22)
+
+
+### Features
+
+* add GitHub OAuth authentication and per-channel JWT authorization ([#25](https://github.com/nonchan7720/webhook-over-websocket/issues/25)) ([61b1aab](https://github.com/nonchan7720/webhook-over-websocket/commit/61b1aab725e65c1895bcbed3abcea7dea49124d0))
+
 ## [1.3.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.0...v1.3.0) (2026-02-20)
 
 
