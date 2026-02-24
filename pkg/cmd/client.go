@@ -204,6 +204,14 @@ func handleHTTPRequest(
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
+	query := req.URL.Query()
+	for key, val := range target.Query() {
+		for _, v := range val {
+			query.Add(key, v)
+		}
+	}
+	target.RawQuery = query.Encode()
+	req.URL = target
 	req.URL.Scheme = target.Scheme
 	req.URL.Host = target.Host
 	req.Host = target.Host
