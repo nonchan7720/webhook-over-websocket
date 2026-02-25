@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.3.0...v1.3.1) (2026-02-24)
+
+
+### Bug Fixes
+
+* request base url ([#33](https://github.com/nonchan7720/webhook-over-websocket/issues/33)) ([0c7e41e](https://github.com/nonchan7720/webhook-over-websocket/commit/0c7e41e8e33fef742e3e1a05e012e39dc66ff701))
+
 ## [1.3.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.2.0...v1.3.0) (2026-02-20)
 
 
