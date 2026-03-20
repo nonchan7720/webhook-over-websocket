@@ -235,11 +235,12 @@ func (c *ClientConn) isActive() bool {
 }
 
 func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) {
+	// Lock to prevent race condition
+	h.activeChannelsMu.Lock()
+	defer h.activeChannelsMu.Unlock()
 	channelID := uuid.New().String()
 	if v:= r.URL.Query().Get("channel_id"); v!= "" {
-		h.activeChannelsMu.RLock()
 		_, ok := h.activeChannels[v]
-		h.activeChannelsMu.RUnlock()
 		if  ok {
 			http.Error(w, "Channel ID already exists", http.StatusBadRequest)
 			return
@@ -255,9 +256,7 @@ func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) 
 		}
 		clientConn.subject = claims.Subject
 	}
-	h.activeChannelsMu.Lock()
 	h.activeChannels[channelID] = clientConn
-	h.activeChannelsMu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]string{"channel_id": channelID}
 	_ = json.NewEncoder(w).Encode(resp) //nolint: errcheck,errchkjson
