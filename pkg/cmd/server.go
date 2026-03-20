@@ -242,7 +242,7 @@ func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) 
 	if v:= r.URL.Query().Get("channel_id"); v!= "" {
 		_, ok := h.activeChannels[v]
 		if  ok {
-			http.Error(w, "Channel ID already exists", http.StatusBadRequest)
+			http.Error(w, "Channel ID already exists", http.StatusConflict)
 			return
 		}
 		channelID = v
