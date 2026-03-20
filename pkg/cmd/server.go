@@ -236,6 +236,13 @@ func (c *ClientConn) isActive() bool {
 
 func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) {
 	channelID := uuid.New().String()
+	if v:= r.URL.Query().Get("channel_id"); v!= "" {
+		if _, ok := h.activeChannels[v]; ok {
+			http.Error(w, "Channel ID already exists", http.StatusBadRequest)
+			return
+		}
+		channelID = v
+	}
 	clientConn := &ClientConn{wsConn: nil}
 	if h.authEnabled {
 		claims, err := auth.ToContext(r.Context())
