@@ -28,6 +28,7 @@ import (
 type clientArgs struct {
 	serverURL string
 	targetURL string
+	channelID string
 
 	insecure bool
 
@@ -59,6 +60,7 @@ func clientCommand() *cobra.Command {
 	flag := cmd.Flags()
 	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
 	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
+	flag.StringVar(&args.channelID, "channel-id", "", "channel ID to use")
 	flag.BoolVar(&args.insecure, "insecure", false, "insecure skip verify")
 	flag.DurationVar(
 		&args.transferRequestTimeout,
@@ -94,8 +96,8 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 		return fmt.Errorf("failed to authorization step: %w", err)
 	}
 
-	// Have the server generate a channel_id
-	channelID, err := getNewChannel(args.serverURL, token)
+	// Have the server generate or use the provided channel_id
+	channelID, err := getNewChannel(args.serverURL, token, args.channelID)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve channel_id: %w", err)
 	}
@@ -240,8 +242,18 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 }
 
 // getNewChannel hits the server's /new endpoint to retrieve the channel_id and optional channel token.
-func getNewChannel(serverURL, token string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, serverURL+"/new", nil)
+func getNewChannel(serverURL, token, channelID string) (string, error) {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return "", err
+	}
+	u.Path = "/new"
+	if channelID != "" {
+		q := u.Query()
+		q.Set("channel_id", channelID)
+		u.RawQuery = q.Encode()
+	}
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return "", err
 	}
