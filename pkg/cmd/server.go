@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -237,11 +238,19 @@ func (c *ClientConn) isActive() bool {
 func (h *serverHandle) handleNewChannel(w http.ResponseWriter, r *http.Request) {
 	channelID := uuid.New().String()
 	if v:= r.URL.Query().Get("channel_id"); v!= "" {
-		if _, ok := h.activeChannels[v]; ok {
+		decoded, err := url.QueryUnescape(v)
+		if err != nil {
+			http.Error(w, "Invalid channel ID", http.StatusBadRequest)
+			return
+		}
+		h.activeChannelsMu.RLock()
+		if _, ok := h.activeChannels[decoded]; ok {
+			h.activeChannelsMu.RUnlock()
 			http.Error(w, "Channel ID already exists", http.StatusBadRequest)
 			return
 		}
-		channelID = v
+		h.activeChannelsMu.Unlock()
+		channelID = decoded
 	}
 	clientConn := &ClientConn{wsConn: nil}
 	if h.authEnabled {
