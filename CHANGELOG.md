@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.4.1...v1.5.0) (2026-03-20)
+
+
+### Features
+
+* Allow clients to specify a channel ID when requesting a new channel_id ([#45](https://github.com/nonchan7720/webhook-over-websocket/issues/45)) ([e503712](https://github.com/nonchan7720/webhook-over-websocket/commit/e503712bf4527c17cd9d31f386d2cb958e102e4c))
+
+
+### Bug Fixes
+
+* patch ([#43](https://github.com/nonchan7720/webhook-over-websocket/issues/43)) ([2bd4d7f](https://github.com/nonchan7720/webhook-over-websocket/commit/2bd4d7f9cea934e3931ab85afa4ae8de0e0daa52))
+
+
+### Miscellaneous
+
+* modify release please config ([#49](https://github.com/nonchan7720/webhook-over-websocket/issues/49)) ([b5270dc](https://github.com/nonchan7720/webhook-over-websocket/commit/b5270dc4dc49331f59a4151f57a7af93841652f2))
+
 ## [1.4.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.4.0...v1.4.1) (2026-02-24)
 
 
