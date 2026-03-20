@@ -243,11 +243,17 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 
 // getNewChannel hits the server's /new endpoint to retrieve the channel_id and optional channel token.
 func getNewChannel(serverURL, token, channelID string) (string, error) {
-	reqURL := serverURL + "/new"
-	if channelID != "" {
-		reqURL += "?channel_id=" + url.QueryEscape(channelID)
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return "", err
 	}
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	u.Path = "/new"
+	if channelID != "" {
+		q := u.Query()
+		q.Set("channel_id", channelID)
+		u.RawQuery = q.Encode()
+	}
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return "", err
 	}
