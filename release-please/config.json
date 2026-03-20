@@ -40,10 +40,7 @@
       "include-component-in-tag": false,
       "draft": false,
       "prerelease": false,
-      "bump-patch-for-minor-pre-major": true,
-      "extra-files": [
-        "pkg/cmd/version.go"
-      ]
+      "bump-patch-for-minor-pre-major": true
     }
   }
 }
