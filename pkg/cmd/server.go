@@ -747,7 +747,7 @@ func getLocalIP() string {
 func getLocalIPFromPOD_IPEnv() string {
 	if podIP := os.Getenv("POD_IP"); podIP != "" {
 		if ip := net.ParseIP(podIP); ip != nil && ip.To4() != nil {
-			slog.Info(fmt.Sprintf("Using POD_IP from environment: %s", podIP))
+			slog.Info(fmt.Sprintf("Using POD_IP from environment: %s", podIP)) //nolint:gosec
 			return podIP
 		}
 	}
