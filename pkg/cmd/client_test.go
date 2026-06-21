@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testChannelID = "test-channel-id"
+
 // makeRawRequest builds a minimal raw HTTP/1.1 GET request for the given path.
 func makeRawRequest(path string) []byte {
 	return []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: example.com\r\n\r\n", path))
@@ -46,37 +48,37 @@ func wsServerPair(t *testing.T) (*websocket.Conn, <-chan TunnelMessage) {
 func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 	tests := []struct {
 		name         string
-		requestPath  string
-		targetPath   string // path suffix for the target URL
+		requestPath  string // full path as received from server (includes /webhook/{channelID})
+		targetPath   string // optional base path on the target URL
 		expectedPath string
 	}{
 		{
 			name:         "root path forwarded as root",
-			requestPath:  "/",
+			requestPath:  "/webhook/" + testChannelID,
 			targetPath:   "",
 			expectedPath: "/",
 		},
 		{
 			name:         "path suffix forwarded to local server",
-			requestPath:  "/api/users",
+			requestPath:  "/webhook/" + testChannelID + "/api/users",
 			targetPath:   "",
 			expectedPath: "/api/users",
 		},
 		{
 			name:         "path suffix merged with target base path",
-			requestPath:  "/users",
+			requestPath:  "/webhook/" + testChannelID + "/users",
 			targetPath:   "/api",
 			expectedPath: "/api/users",
 		},
 		{
 			name:         "trailing slash preserved",
-			requestPath:  "/api/",
+			requestPath:  "/webhook/" + testChannelID + "/api/",
 			targetPath:   "",
 			expectedPath: "/api/",
 		},
 		{
 			name:         "nested path forwarded",
-			requestPath:  "/webhooks/github/push",
+			requestPath:  "/webhook/" + testChannelID + "/webhooks/github/push",
 			targetPath:   "",
 			expectedPath: "/webhooks/github/push",
 		},
@@ -113,6 +115,7 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 				wsConn,
 				&wsMutex,
 				targetURL,
+				testChannelID,
 				5*time.Second,
 				false,
 			)
