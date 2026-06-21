@@ -137,26 +137,26 @@ func TestServerPathStripping(t *testing.T) {
 	}{
 		{
 			name:         "no suffix",
-			fullPath:     "/webhook/ch1",
-			channelID:    "ch1",
+			fullPath:     "/webhook/" + testChannelID,
+			channelID:    testChannelID,
 			expectedPath: "/",
 		},
 		{
 			name:         "trailing slash only",
-			fullPath:     "/webhook/ch1/",
-			channelID:    "ch1",
+			fullPath:     "/webhook/" + testChannelID + "/",
+			channelID:    testChannelID,
 			expectedPath: "/",
 		},
 		{
 			name:         "single segment suffix",
-			fullPath:     "/webhook/ch1/events",
-			channelID:    "ch1",
+			fullPath:     "/webhook/" + testChannelID + "/events",
+			channelID:    testChannelID,
 			expectedPath: "/events",
 		},
 		{
 			name:         "nested suffix",
-			fullPath:     "/webhook/ch1/api/webhooks/github",
-			channelID:    "ch1",
+			fullPath:     "/webhook/" + testChannelID + "/api/webhooks/github",
+			channelID:    testChannelID,
 			expectedPath: "/api/webhooks/github",
 		},
 	}

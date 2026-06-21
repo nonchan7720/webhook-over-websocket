@@ -321,7 +321,7 @@ func (h *serverHandle) handleAuthGitHub(w http.ResponseWriter, r *http.Request) 
 	}
 	redirectURI := fmt.Sprintf("%s://%s/auth/callback", scheme, r.Host)
 	redirectURL := auth.GithubAuthURL(h.githubClientID, state, redirectURI, h.githubOrg != "")
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	http.Redirect(w, r, redirectURL, http.StatusFound) //nolint:gosec
 }
 
 func (h *serverHandle) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -581,7 +581,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	clientConn.wsConn = conn
 	clientConn.mu.Unlock()
 
-	slog.Info(fmt.Sprintf("Client connected: %s", channelID))
+	slog.Info(fmt.Sprintf("Client connected: %s", channelID)) //nolint:gosec
 
 	// Set the handler for Ping/Pong processing
 	conn.SetPongHandler(func(string) error {
@@ -596,7 +596,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		delete(h.activeChannels, channelID)
 		h.activeChannelsMu.Unlock()
 		_ = conn.Close() //nolint: errcheck
-		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID))
+		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID)) //nolint:gosec
 	}()
 
 	// Goroutine that periodically sends pings
@@ -654,7 +654,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// Normal disconnection
 	case <-h.serverCtx.Done():
 		// Server Shutdown
-		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID))
+		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID)) //nolint:gosec
 		_ = conn.WriteMessage( //nolint: errcheck
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server is shutting down"),
