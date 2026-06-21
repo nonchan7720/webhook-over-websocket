@@ -296,7 +296,7 @@ func (h *serverHandle) handleWaitHandler(w http.ResponseWriter, r *http.Request)
 	select {
 	case token := <-tokenChan:
 		// When a token is received, send it to the CLI.
-		fmt.Fprintf(w, "data: %s\n\n", token)
+		fmt.Fprintf(w, "data: %s\n\n", token) //nolint:errcheck
 		flusher.Flush()
 	case <-r.Context().Done():
 		// If the CLI side disconnects due to a timeout or similar
@@ -827,7 +827,9 @@ func (h *serverHandle) notifyMsg(notifyMsg *cluster.NotifyMsg) {
 			slog.Error(err.Error())
 		}
 		if ch, ok := h.waitingClients.Load(msg.SessionID); ok {
-			ch.(chan string) <- msg.Token
+			if c, ok := ch.(chan string); ok {
+				c <- msg.Token
+			}
 		}
 	}
 }

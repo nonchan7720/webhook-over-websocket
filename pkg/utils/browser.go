@@ -21,7 +21,7 @@ func OpenBrowser(url string) error {
 			return err
 		}
 		args := append(launcherArgs[1:], url)
-		cmd := exec.Command(launcherExec, args...)
+		cmd := exec.Command(launcherExec, args...) //nolint:gosec
 		cmd.Stderr = os.Stderr
 		cmd.Stdout = os.Stdout
 		return cmd.Run()
