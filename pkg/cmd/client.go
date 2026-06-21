@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"strings"
 	"sync"
 	"syscall"
@@ -306,12 +307,22 @@ func handleHTTPRequest(
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
+
+	// The path has already had /webhook/{channelID} stripped by the server.
+	// Merge it with the target's base path so that dynamic paths are forwarded.
+	// e.g. original=/api/users + target=http://localhost:3000/base → http://localhost:3000/base/api/users
+	originalPath := req.URL.Path
 	query := req.URL.Query()
 	for key, val := range target.Query() {
 		for _, v := range val {
 			query.Add(key, v)
 		}
 	}
+	mergedPath := path.Join(target.Path, originalPath)
+	if strings.HasSuffix(originalPath, "/") && !strings.HasSuffix(mergedPath, "/") {
+		mergedPath += "/"
+	}
+	target.Path = mergedPath
 	target.RawQuery = query.Encode()
 	req.URL = target
 	req.URL.Scheme = target.Scheme

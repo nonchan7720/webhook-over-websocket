@@ -676,6 +676,16 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Strip /webhook/{channelID} prefix so the client receives only the path suffix.
+	// e.g. /webhook/uuid/api/users → /api/users
+	pathPrefix := "/webhook/" + channelID
+	pathSuffix := strings.TrimPrefix(r.URL.Path, pathPrefix)
+	if pathSuffix == "" || pathSuffix[0] != '/' {
+		pathSuffix = "/" + pathSuffix
+	}
+	r.URL.Path = pathSuffix
+	r.RequestURI = r.URL.RequestURI()
+
 	// Convert HTTP requests directly into raw byte sequences (equivalent to TCP dumps)
 	rawReqBytes, err := httputil.DumpRequest(r, true)
 	if err != nil {
