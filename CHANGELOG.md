@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.5.0...v1.6.0) (2026-06-21)
+
+
+### Features
+
+* forward dynamic path suffixes to local server (like Cloudflare Tunnel) ([#50](https://github.com/nonchan7720/webhook-over-websocket/issues/50)) ([2492aac](https://github.com/nonchan7720/webhook-over-websocket/commit/2492aac22c888f6d97b4cc767c1f9b509411aa6a))
+
 ## [1.5.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.4.1...v1.5.0) (2026-03-20)
 
 
