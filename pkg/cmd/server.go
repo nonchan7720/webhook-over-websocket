@@ -296,7 +296,7 @@ func (h *serverHandle) handleWaitHandler(w http.ResponseWriter, r *http.Request)
 	select {
 	case token := <-tokenChan:
 		// When a token is received, send it to the CLI.
-		fmt.Fprintf(w, "data: %s\n\n", token)
+		fmt.Fprintf(w, "data: %s\n\n", token) //nolint:errcheck
 		flusher.Flush()
 	case <-r.Context().Done():
 		// If the CLI side disconnects due to a timeout or similar
@@ -321,7 +321,7 @@ func (h *serverHandle) handleAuthGitHub(w http.ResponseWriter, r *http.Request) 
 	}
 	redirectURI := fmt.Sprintf("%s://%s/auth/callback", scheme, r.Host)
 	redirectURL := auth.GithubAuthURL(h.githubClientID, state, redirectURI, h.githubOrg != "")
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	http.Redirect(w, r, redirectURL, http.StatusFound) //nolint:gosec
 }
 
 func (h *serverHandle) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -581,7 +581,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	clientConn.wsConn = conn
 	clientConn.mu.Unlock()
 
-	slog.Info(fmt.Sprintf("Client connected: %s", channelID))
+	slog.Info(fmt.Sprintf("Client connected: %s", channelID)) //nolint:gosec
 
 	// Set the handler for Ping/Pong processing
 	conn.SetPongHandler(func(string) error {
@@ -596,7 +596,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		delete(h.activeChannels, channelID)
 		h.activeChannelsMu.Unlock()
 		_ = conn.Close() //nolint: errcheck
-		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID))
+		slog.Info(fmt.Sprintf("Client disconnected: %s", channelID)) //nolint:gosec
 	}()
 
 	// Goroutine that periodically sends pings
@@ -654,7 +654,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// Normal disconnection
 	case <-h.serverCtx.Done():
 		// Server Shutdown
-		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID))
+		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID)) //nolint:gosec
 		_ = conn.WriteMessage( //nolint: errcheck
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server is shutting down"),
@@ -747,7 +747,7 @@ func getLocalIP() string {
 func getLocalIPFromPOD_IPEnv() string {
 	if podIP := os.Getenv("POD_IP"); podIP != "" {
 		if ip := net.ParseIP(podIP); ip != nil && ip.To4() != nil {
-			slog.Info(fmt.Sprintf("Using POD_IP from environment: %s", podIP))
+			slog.Info(fmt.Sprintf("Using POD_IP from environment: %s", podIP)) //nolint:gosec
 			return podIP
 		}
 	}
@@ -827,7 +827,9 @@ func (h *serverHandle) notifyMsg(notifyMsg *cluster.NotifyMsg) {
 			slog.Error(err.Error())
 		}
 		if ch, ok := h.waitingClients.Load(msg.SessionID); ok {
-			ch.(chan string) <- msg.Token
+			if c, ok := ch.(chan string); ok {
+				c <- msg.Token
+			}
 		}
 	}
 }

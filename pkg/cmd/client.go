@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"strings"
 	"sync"
 	"syscall"
@@ -215,6 +216,7 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 				conn,
 				&wsMutex,
 				args.targetURL,
+				channelID,
 				args.transferRequestTimeout,
 				args.disableTransferRequestTimeout,
 			)
@@ -284,6 +286,7 @@ func handleHTTPRequest(
 	wsConn *websocket.Conn,
 	wsMutex *sync.Mutex,
 	targetURL string,
+	channelID string,
 	timeout time.Duration,
 	disabledTimeout bool,
 ) {
@@ -306,12 +309,28 @@ func handleHTTPRequest(
 		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
 		return
 	}
+
+	// Strip /webhook/{channelID} prefix from the request path, then merge with the
+	// target's base path so that dynamic paths are forwarded to the local server.
+	// e.g. /webhook/uuid/api/users + target=http://localhost:3000/base → http://localhost:3000/base/api/users
+	rawPath := req.URL.Path
+	pathPrefix := "/webhook/" + channelID
+	pathSuffix := strings.TrimPrefix(rawPath, pathPrefix)
+	if pathSuffix == "" || pathSuffix[0] != '/' {
+		pathSuffix = "/" + pathSuffix
+	}
+	originalPath := pathSuffix
 	query := req.URL.Query()
 	for key, val := range target.Query() {
 		for _, v := range val {
 			query.Add(key, v)
 		}
 	}
+	mergedPath := path.Join(target.Path, originalPath)
+	if strings.HasSuffix(originalPath, "/") && !strings.HasSuffix(mergedPath, "/") {
+		mergedPath += "/"
+	}
+	target.Path = mergedPath
 	target.RawQuery = query.Encode()
 	req.URL = target
 	req.URL.Scheme = target.Scheme
