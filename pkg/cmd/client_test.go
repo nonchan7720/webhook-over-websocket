@@ -3,8 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -179,6 +181,128 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 	mu.Lock()
 	assert.Equal(t, testAPIUsersPath+"/", receivedPath)
 	mu.Unlock()
+}
+
+func TestHandleHTTPRequestRedirectBodyReplayed(t *testing.T) {
+	// 307 must replay the original request body on the redirected request.
+	// This verifies that wireRequestBody correctly wires GetBody so the client
+	// can re-read the body after the redirect.
+	const reqBody = `{"name":"alice"}`
+
+	var (
+		mu             sync.Mutex
+		receivedBody   string
+		receivedMethod string
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == testAPIUsersPath {
+			http.Redirect(w, r, testAPIUsersPath+"/", http.StatusTemporaryRedirect)
+			return
+		}
+		body, _ := io.ReadAll(r.Body) //nolint:errcheck
+		mu.Lock()
+		receivedBody = string(body)
+		receivedMethod = r.Method
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, _ := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	rawReq := fmt.Sprintf(
+		"POST /webhook/%s%s HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		testChannelID, testAPIUsersPath, len(reqBody), reqBody,
+	)
+	handleHTTPRequest(
+		context.Background(),
+		TunnelMessage{ReqID: "body-replay-test", Payload: []byte(rawReq)},
+		wsConn, &wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID, 5*time.Second, false,
+	)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, reqBody, receivedBody, "body must be replayed through 307 redirect")
+	assert.Equal(t, http.MethodPost, receivedMethod, "method must be preserved through 307 redirect")
+}
+
+func TestHandleHTTPRequestQueryParamsForwarded(t *testing.T) {
+	var (
+		mu            sync.Mutex
+		receivedQuery url.Values
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedQuery = r.URL.Query()
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, _ := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	rawReq := fmt.Sprintf(
+		"GET /webhook/%s%s?token=secret&page=2 HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		testChannelID, testAPIUsersPath,
+	)
+	handleHTTPRequest(
+		context.Background(),
+		TunnelMessage{ReqID: "query-test", Payload: []byte(rawReq)},
+		wsConn, &wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID, 5*time.Second, false,
+	)
+
+	mu.Lock()
+	got := receivedQuery
+	mu.Unlock()
+	assert.Equal(t, "secret", got.Get("token"))
+	assert.Equal(t, "2", got.Get("page"))
+}
+
+func TestHandleHTTPRequestRedirectQueryParamsPreserved(t *testing.T) {
+	var (
+		mu            sync.Mutex
+		receivedPath  string
+		receivedQuery url.Values
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == testAPIUsersPath {
+			// Redirect preserving query string in the target URL.
+			http.Redirect(w, r, testAPIUsersPath+"/?"+ r.URL.RawQuery, http.StatusTemporaryRedirect)
+			return
+		}
+		mu.Lock()
+		receivedPath = r.URL.Path
+		receivedQuery = r.URL.Query()
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, _ := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	rawReq := fmt.Sprintf(
+		"GET /webhook/%s%s?token=secret HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		testChannelID, testAPIUsersPath,
+	)
+	handleHTTPRequest(
+		context.Background(),
+		TunnelMessage{ReqID: "redirect-query-test", Payload: []byte(rawReq)},
+		wsConn, &wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID, 5*time.Second, false,
+	)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, testAPIUsersPath+"/", receivedPath)
+	assert.Equal(t, "secret", receivedQuery.Get("token"))
 }
 
 func TestServerPathStripping(t *testing.T) {
