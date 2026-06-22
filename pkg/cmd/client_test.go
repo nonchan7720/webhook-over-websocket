@@ -26,17 +26,20 @@ func makeRawRequest(path string) []byte {
 }
 
 // wsServerPair creates a WebSocket server and returns the client connection and a
-// channel that receives TunnelMessages written by handleHTTPRequest.
+// channel that receives all TunnelMessages written by handleHTTPRequest.
 func wsServerPair(t *testing.T) (*websocket.Conn, <-chan TunnelMessage) {
 	t.Helper()
-	ch := make(chan TunnelMessage, 1)
+	ch := make(chan TunnelMessage, 64)
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		require.NoError(t, err)
 		defer conn.Close() //nolint:errcheck
-		var msg TunnelMessage
-		if err := conn.ReadJSON(&msg); err == nil {
+		for {
+			var msg TunnelMessage
+			if err := conn.ReadJSON(&msg); err != nil {
+				break
+			}
 			ch <- msg
 		}
 	}))
@@ -170,8 +173,9 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 		false,
 	)
 
-	received := <-respCh
-	assert.Contains(t, string(received.Payload), "200 OK")
+	// First message contains the response headers (streaming protocol).
+	firstMsg := <-respCh
+	assert.Contains(t, string(firstMsg.Payload), "200 OK")
 	mu.Lock()
 	assert.Equal(t, testAPIUsersPath+"/", receivedPath)
 	mu.Unlock()
