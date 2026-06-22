@@ -339,7 +339,14 @@ func handleHTTPRequest(
 	req = req.WithContext(ctx)
 
 	// Send to local server
-	client := &http.Client{}
+	// Do not follow redirects — return the redirect response as-is so the
+	// original webhook caller can decide whether to follow it. Without this,
+	// the default client would follow 301/302 and silently convert POST to GET.
+	client := &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	if !disabledTimeout && timeout > 0 {
 		client.Timeout = timeout
 	}

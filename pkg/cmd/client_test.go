@@ -128,6 +128,41 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 	}
 }
 
+func TestHandleHTTPRequestRedirectNotFollowed(t *testing.T) {
+	// The local server issues a 301 redirect. The tunnel must return the redirect
+	// response as-is rather than following it, so that POST bodies are never
+	// silently converted to GET and the caller retains control over redirect policy.
+	redirectTarget := "/new-location"
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget, http.StatusMovedPermanently)
+	}))
+	defer localServer.Close()
+
+	wsConn, respCh := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	msg := TunnelMessage{
+		ReqID:   "redirect-test",
+		Payload: makeRawRequest("/webhook/" + testChannelID + "/api/users"),
+	}
+
+	handleHTTPRequest(
+		context.Background(),
+		msg,
+		wsConn,
+		&wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID,
+		5*time.Second,
+		false,
+	)
+
+	received := <-respCh
+	// The raw response bytes must contain the 301 status line, not 200.
+	assert.Contains(t, string(received.Payload), "301 Moved Permanently")
+	assert.NotContains(t, string(received.Payload), "200 OK")
+}
+
 func TestServerPathStripping(t *testing.T) {
 	tests := []struct {
 		name         string
