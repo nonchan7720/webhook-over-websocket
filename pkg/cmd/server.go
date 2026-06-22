@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -34,7 +33,7 @@ import (
 type serverHandle struct {
 	activeChannels   map[string]*ClientConn
 	activeChannelsMu sync.RWMutex
-	pendingRequests  map[string]chan []byte
+	pendingRequests  map[string]chan TunnelMessage
 	pendingMu        sync.RWMutex
 	upgrader         websocket.Upgrader
 	myIP             string
@@ -121,7 +120,7 @@ func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyc
 	handler := &serverHandle{
 		myIP:            myIP,
 		activeChannels:  make(map[string]*ClientConn),
-		pendingRequests: make(map[string]chan []byte),
+		pendingRequests: make(map[string]chan TunnelMessage),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -220,7 +219,8 @@ func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyc
 
 type TunnelMessage struct {
 	ReqID   string `json:"req_id"`
-	Payload []byte `json:"payload"`
+	Payload []byte `json:"payload,omitempty"`
+	EOF     bool   `json:"eof,omitempty"`
 }
 
 type ClientConn struct {
@@ -643,7 +643,7 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			h.pendingMu.RUnlock()
 
 			if exists {
-				respCh <- msg.Payload
+				respCh <- msg
 			}
 		}
 	}()
@@ -684,7 +684,7 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqID := uuid.New().String()
-	respCh := make(chan []byte)
+	respCh := make(chan TunnelMessage, 32)
 
 	h.pendingMu.Lock()
 	h.pendingRequests[reqID] = respCh
@@ -707,25 +707,48 @@ func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Waiting for a response from the client
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
 	select {
-	case rawRespBytes := <-respCh:
-		// Restore the raw byte array to an http.Response object
-		resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(rawRespBytes)), r)
+	case firstMsg := <-respCh:
+		resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(firstMsg.Payload)), r)
 		if err != nil {
 			http.Error(w, "Bad gateway response from client", http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close() //nolint: errcheck,errchkjson
+		defer resp.Body.Close() //nolint: errcheck
 		for k, vv := range resp.Header {
 			for _, v := range vv {
 				w.Header().Add(k, v)
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		_, _ = io.Copy(w, resp.Body) //nolint: errcheck
-
-	case <-time.After(30 * time.Second):
+		drainResponseChunks(w, respCh, timer)
+	case <-timer.C:
 		http.Error(w, "Gateway Timeout", http.StatusGatewayTimeout)
+	}
+}
+
+func drainResponseChunks(w http.ResponseWriter, respCh <-chan TunnelMessage, timer *time.Timer) {
+	flusher, canFlush := w.(http.Flusher)
+	if canFlush {
+		flusher.Flush()
+	}
+	for {
+		select {
+		case chunkMsg := <-respCh:
+			if chunkMsg.EOF {
+				return
+			}
+			if _, err := w.Write(chunkMsg.Payload); err != nil {
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		case <-timer.C:
+			return
+		}
 	}
 }
 

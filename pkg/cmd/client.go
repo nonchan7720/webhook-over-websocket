@@ -7,9 +7,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -301,6 +301,10 @@ func handleHTTPRequest(
 		return
 	}
 
+	// Wire req.Body/GetBody to the body slice of msg.Payload without copying,
+	// enabling Go's http.Client to replay the body on 307/308 redirects.
+	wireRequestBody(req, msg.Payload)
+
 	// Rewrite request information for the local server
 	req.RequestURI = "" // NOTE: When sending as a client, it must be left blank.
 	target, err := url.Parse(targetURL)
@@ -351,34 +355,81 @@ func handleHTTPRequest(
 	}
 	defer resp.Body.Close() //nolint: errcheck
 
-	// Dump the received response as a raw byte stream
-	rawRespBytes, err := httputil.DumpResponse(resp, true)
-	if err != nil {
-		slog.Error(fmt.Sprintf("[ReqID: %s] Response Dump Error: %v", msg.ReqID, err))
+	if err := streamResponse(msg.ReqID, resp, wsConn, wsMutex); err != nil {
+		slog.Error(fmt.Sprintf("[ReqID: %s] Response Stream Error: %v", msg.ReqID, err))
 		return
 	}
-
-	respMsg := TunnelMessage{
-		ReqID:   msg.ReqID,
-		Payload: rawRespBytes,
-	}
-
-	wsMutex.Lock()
-	_ = wsConn.WriteJSON(respMsg) //nolint: errcheck
-	wsMutex.Unlock()
-
 	slog.Info(fmt.Sprintf("[ReqID: %s] The local response has been returned to the server. (Status: %d)", msg.ReqID, resp.StatusCode))
 }
 
-// sendErrorResponse returns a 502 Bad Gateway error when it cannot connect locally.
-func sendErrorResponse(reqID string, wsConn *websocket.Conn, wsMutex *sync.Mutex) {
-	badGatewayResp := "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-	msg := TunnelMessage{
-		ReqID:   reqID,
-		Payload: []byte(badGatewayResp),
+// wireRequestBody points req.Body and GetBody directly at the body slice within
+// raw (the original WebSocket payload) without copying, so Go's http.Client can
+// replay the body on 307/308 redirects.
+func wireRequestBody(req *http.Request, raw []byte) {
+	sep := bytes.Index(raw, []byte("\r\n\r\n"))
+	if sep < 0 {
+		return
 	}
+	body := raw[sep+4:]
+	if len(body) == 0 {
+		return
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	req.ContentLength = int64(len(body))
+}
+
+const streamChunkSize = 32 * 1024
+
+func streamResponse(reqID string, resp *http.Response, wsConn *websocket.Conn, wsMutex *sync.Mutex) error {
+	var hdr bytes.Buffer
+	fmt.Fprintf(&hdr, "HTTP/%d.%d %d %s\r\n", resp.ProtoMajor, resp.ProtoMinor, resp.StatusCode, http.StatusText(resp.StatusCode)) //nolint:errcheck
+	if err := resp.Header.Write(&hdr); err != nil {
+		return err
+	}
+	hdr.WriteString("\r\n")
+
 	wsMutex.Lock()
-	_ = wsConn.WriteJSON(msg) //nolint: errcheck
+	err := wsConn.WriteJSON(TunnelMessage{ReqID: reqID, Payload: hdr.Bytes()})
+	wsMutex.Unlock()
+	if err != nil {
+		return err
+	}
+
+	buf := make([]byte, streamChunkSize)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			wsMutex.Lock()
+			err = wsConn.WriteJSON(TunnelMessage{ReqID: reqID, Payload: chunk})
+			wsMutex.Unlock()
+			if err != nil {
+				return err
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+
+	wsMutex.Lock()
+	err = wsConn.WriteJSON(TunnelMessage{ReqID: reqID, EOF: true})
+	wsMutex.Unlock()
+	return err
+}
+
+func sendErrorResponse(reqID string, wsConn *websocket.Conn, wsMutex *sync.Mutex) {
+	header := []byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+	wsMutex.Lock()
+	_ = wsConn.WriteJSON(TunnelMessage{ReqID: reqID, Payload: header}) //nolint: errcheck
+	_ = wsConn.WriteJSON(TunnelMessage{ReqID: reqID, EOF: true})        //nolint: errcheck
 	wsMutex.Unlock()
 }
 
