@@ -15,7 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testChannelID = "test-channel-id"
+const (
+	testChannelID    = "test-channel-id"
+	testAPIUsersPath = "/api/users"
+)
 
 // makeRawRequest builds a minimal raw HTTP/1.1 GET request for the given path.
 func makeRawRequest(path string) []byte {
@@ -60,15 +63,15 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 		},
 		{
 			name:         "path suffix forwarded to local server",
-			requestPath:  "/webhook/" + testChannelID + "/api/users",
+			requestPath:  "/webhook/" + testChannelID + testAPIUsersPath,
 			targetPath:   "",
-			expectedPath: "/api/users",
+			expectedPath: testAPIUsersPath,
 		},
 		{
 			name:         "path suffix merged with target base path",
 			requestPath:  "/webhook/" + testChannelID + "/users",
 			targetPath:   "/api",
-			expectedPath: "/api/users",
+			expectedPath: testAPIUsersPath,
 		},
 		{
 			name:         "trailing slash preserved",
@@ -137,8 +140,8 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 		receivedPath string
 	)
 	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/users" {
-			http.Redirect(w, r, "/api/users/", http.StatusTemporaryRedirect)
+		if r.URL.Path == testAPIUsersPath {
+			http.Redirect(w, r, testAPIUsersPath+"/", http.StatusTemporaryRedirect)
 			return
 		}
 		mu.Lock()
@@ -153,7 +156,7 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 
 	msg := TunnelMessage{
 		ReqID:   "redirect-test",
-		Payload: makeRawRequest("/webhook/" + testChannelID + "/api/users"),
+		Payload: makeRawRequest("/webhook/" + testChannelID + testAPIUsersPath),
 	}
 
 	handleHTTPRequest(
@@ -170,7 +173,7 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 	received := <-respCh
 	assert.Contains(t, string(received.Payload), "200 OK")
 	mu.Lock()
-	assert.Equal(t, "/api/users/", receivedPath)
+	assert.Equal(t, testAPIUsersPath+"/", receivedPath)
 	mu.Unlock()
 }
 
