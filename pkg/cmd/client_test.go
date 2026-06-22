@@ -128,13 +128,23 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 	}
 }
 
-func TestHandleHTTPRequestRedirectNotFollowed(t *testing.T) {
-	// The local server issues a 301 redirect. The tunnel must return the redirect
-	// response as-is rather than following it, so that POST bodies are never
-	// silently converted to GET and the caller retains control over redirect policy.
-	redirectTarget := "/new-location"
+func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
+	// 307 Temporary Redirect must be followed with the original method and body.
+	// Without GetBody wired up, Go's http.Client cannot replay the body on redirect
+	// and returns the 307 as-is instead of following it.
+	var (
+		mu           sync.Mutex
+		receivedPath string
+	)
 	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, redirectTarget, http.StatusMovedPermanently)
+		if r.URL.Path == "/api/users" {
+			http.Redirect(w, r, "/api/users/", http.StatusTemporaryRedirect)
+			return
+		}
+		mu.Lock()
+		receivedPath = r.URL.Path
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer localServer.Close()
 
@@ -158,9 +168,11 @@ func TestHandleHTTPRequestRedirectNotFollowed(t *testing.T) {
 	)
 
 	received := <-respCh
-	// The raw response bytes must contain the 301 status line, not 200.
-	assert.Contains(t, string(received.Payload), "301 Moved Permanently")
-	assert.NotContains(t, string(received.Payload), "200 OK")
+	// The 307 redirect is followed and the final 200 is returned.
+	assert.Contains(t, string(received.Payload), "200 OK")
+	mu.Lock()
+	assert.Equal(t, "/api/users/", receivedPath)
+	mu.Unlock()
 }
 
 func TestServerPathStripping(t *testing.T) {
