@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -301,6 +302,15 @@ func handleHTTPRequest(
 		return
 	}
 
+	// http.ReadRequest does not set GetBody, so Go's http.Client cannot replay
+	// the body when following 307/308 redirects. Buffer the body and wire up
+	// GetBody so the client can re-read the body on each redirect hop.
+	if err := bufferRequestBody(req); err != nil {
+		slog.Error(fmt.Sprintf("[ReqID: %s] Body read error: %v", msg.ReqID, err))
+		sendErrorResponse(msg.ReqID, wsConn, wsMutex)
+		return
+	}
+
 	// Rewrite request information for the local server
 	req.RequestURI = "" // NOTE: When sending as a client, it must be left blank.
 	target, err := url.Parse(targetURL)
@@ -368,6 +378,25 @@ func handleHTTPRequest(
 	wsMutex.Unlock()
 
 	slog.Info(fmt.Sprintf("[ReqID: %s] The local response has been returned to the server. (Status: %d)", msg.ReqID, resp.StatusCode))
+}
+
+// bufferRequestBody reads req.Body into memory and sets req.GetBody so that
+// Go's http.Client can replay the body when following 307/308 redirects.
+func bufferRequestBody(req *http.Request) error {
+	if req.Body == nil || req.Body == http.NoBody {
+		return nil
+	}
+	bodyBytes, err := io.ReadAll(req.Body)
+	_ = req.Body.Close() //nolint:errcheck
+	if err != nil {
+		return err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+	}
+	req.ContentLength = int64(len(bodyBytes))
+	return nil
 }
 
 // sendErrorResponse returns a 502 Bad Gateway error when it cannot connect locally.

@@ -128,6 +128,52 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 	}
 }
 
+func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
+	// 307 Temporary Redirect must be followed with the original method and body.
+	// Without GetBody wired up, Go's http.Client cannot replay the body on redirect
+	// and returns the 307 as-is instead of following it.
+	var (
+		mu           sync.Mutex
+		receivedPath string
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/users" {
+			http.Redirect(w, r, "/api/users/", http.StatusTemporaryRedirect)
+			return
+		}
+		mu.Lock()
+		receivedPath = r.URL.Path
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, respCh := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	msg := TunnelMessage{
+		ReqID:   "redirect-test",
+		Payload: makeRawRequest("/webhook/" + testChannelID + "/api/users"),
+	}
+
+	handleHTTPRequest(
+		context.Background(),
+		msg,
+		wsConn,
+		&wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID,
+		5*time.Second,
+		false,
+	)
+
+	received := <-respCh
+	assert.Contains(t, string(received.Payload), "200 OK")
+	mu.Lock()
+	assert.Equal(t, "/api/users/", receivedPath)
+	mu.Unlock()
+}
+
 func TestServerPathStripping(t *testing.T) {
 	tests := []struct {
 		name         string
