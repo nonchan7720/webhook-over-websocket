@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.6.0...v1.7.0) (2026-06-23)
+
+
+### Features
+
+* stream request body for 307/308 redirect replay via TeeReader ([#54](https://github.com/nonchan7720/webhook-over-websocket/issues/54)) ([a57fd04](https://github.com/nonchan7720/webhook-over-websocket/commit/a57fd04ddd0c9c3e81c7117a4f3a44994a7e4b7c))
+
+
+### Performance Improvements
+
+* stream WebSocket response and fix 307/308 redirect body replay ([#53](https://github.com/nonchan7720/webhook-over-websocket/issues/53)) ([6227149](https://github.com/nonchan7720/webhook-over-websocket/commit/6227149a24160dab352c9843c3ac3c93b12d8fe4))
+
 ## [1.6.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.5.0...v1.6.0) (2026-06-21)
 
 
