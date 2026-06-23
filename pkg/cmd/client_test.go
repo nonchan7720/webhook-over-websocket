@@ -27,6 +27,14 @@ func makeRawRequest(path string) []byte {
 	return []byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: example.com\r\n\r\n", path))
 }
 
+// makeRawPostRequest builds a raw HTTP/1.1 POST request with a JSON body.
+func makeRawPostRequest(path, body string) []byte {
+	return []byte(fmt.Sprintf(
+		"POST %s HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		path, len(body), body,
+	))
+}
+
 // wsServerPair creates a WebSocket server and returns the client connection and a
 // channel that receives all TunnelMessages written by handleHTTPRequest.
 func wsServerPair(t *testing.T) (*websocket.Conn, <-chan TunnelMessage) {
@@ -211,13 +219,9 @@ func TestHandleHTTPRequestRedirectBodyReplayed(t *testing.T) {
 	wsConn, _ := wsServerPair(t)
 	var wsMutex sync.Mutex
 
-	rawReq := fmt.Sprintf(
-		"POST /webhook/%s%s HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
-		testChannelID, testAPIUsersPath, len(reqBody), reqBody,
-	)
 	handleHTTPRequest(
 		context.Background(),
-		TunnelMessage{ReqID: "body-replay-test", Payload: []byte(rawReq)},
+		TunnelMessage{ReqID: "body-replay-test", Payload: makeRawPostRequest("/webhook/"+testChannelID+testAPIUsersPath, reqBody)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
 		testChannelID, 5*time.Second, false,
