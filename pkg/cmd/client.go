@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -362,23 +363,50 @@ func handleHTTPRequest(
 	slog.Info(fmt.Sprintf("[ReqID: %s] The local response has been returned to the server. (Status: %d)", msg.ReqID, resp.StatusCode))
 }
 
-// wireRequestBody points req.Body and GetBody directly at the body slice within
-// raw (the original WebSocket payload) without copying, so Go's http.Client can
-// replay the body on 307/308 redirects.
+// wireRequestBody points req.Body and req.GetBody directly at the body bytes
+// within raw (the original WebSocket payload) so Go's http.Client can replay the
+// body when following 307/308 redirects.
+//
+// The whole request already lives in memory as raw, so every reader handed out
+// here is just a view over that existing slice: the initial send and each
+// redirect replay stream the same bytes with zero additional allocation. The
+// body is never expanded into a separate buffer, even for chunked requests,
+// where httputil.NewChunkedReader decodes the chunk framing on the fly.
 func wireRequestBody(req *http.Request, raw []byte) {
+	chunked := len(req.TransferEncoding) > 0 && req.TransferEncoding[0] == "chunked"
+	if !chunked && req.ContentLength <= 0 {
+		return // no body to replay
+	}
 	sep := bytes.Index(raw, []byte("\r\n\r\n"))
 	if sep < 0 {
 		return
 	}
-	body := raw[sep+4:]
-	if len(body) == 0 {
+	rawBody := raw[sep+4:]
+
+	if chunked {
+		// rawBody is chunk-encoded; decode it lazily on each read so the decoded
+		// body is never materialized in memory. Transfer-Encoding stays chunked,
+		// so http.Client re-chunks these decoded bytes on the wire.
+		newBody := func() io.ReadCloser {
+			return io.NopCloser(httputil.NewChunkedReader(bytes.NewReader(rawBody)))
+		}
+		req.Body = newBody()
+		req.GetBody = func() (io.ReadCloser, error) {
+			return newBody(), nil
+		}
 		return
 	}
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
+
+	// Content-Length body: the bytes after the header terminator are the body
+	// verbatim. Clamp to ContentLength to guard against any trailing bytes.
+	if int64(len(rawBody)) > req.ContentLength {
+		rawBody = rawBody[:req.ContentLength]
 	}
-	req.ContentLength = int64(len(body))
+	req.Body = io.NopCloser(bytes.NewReader(rawBody))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(rawBody)), nil
+	}
+	req.ContentLength = int64(len(rawBody))
 }
 
 const streamChunkSize = 32 * 1024

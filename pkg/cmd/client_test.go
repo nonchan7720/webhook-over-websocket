@@ -35,6 +35,18 @@ func makeRawPostRequest(path, body string) []byte {
 	))
 }
 
+// makeRawChunkedPostRequest builds a raw HTTP/1.1 POST request whose body uses
+// Transfer-Encoding: chunked. Each element of chunks becomes one wire chunk.
+func makeRawChunkedPostRequest(path string, chunks ...string) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "POST %s HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n", path)
+	for _, c := range chunks {
+		fmt.Fprintf(&b, "%x\r\n%s\r\n", len(c), c)
+	}
+	b.WriteString("0\r\n\r\n")
+	return []byte(b.String())
+}
+
 // wsServerPair creates a WebSocket server and returns the client connection and a
 // channel that receives all TunnelMessages written by handleHTTPRequest.
 func wsServerPair(t *testing.T) (*websocket.Conn, <-chan TunnelMessage) {
@@ -231,6 +243,48 @@ func TestHandleHTTPRequestRedirectBodyReplayed(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, reqBody, receivedBody, "body must be replayed through 307 redirect")
 	assert.Equal(t, http.MethodPost, receivedMethod, "method must be preserved through 307 redirect")
+}
+
+func TestHandleHTTPRequestChunkedBodyReplayed(t *testing.T) {
+	// A chunked request body must be decoded from the raw payload and replayed
+	// through a 307 redirect. wireRequestBody streams the chunk-encoded bytes via
+	// httputil.NewChunkedReader rather than buffering the decoded body.
+	const want = `{"name":"alice"}`
+
+	var (
+		mu           sync.Mutex
+		receivedBody string
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == testAPIUsersPath {
+			http.Redirect(w, r, testAPIUsersPath+"/", http.StatusTemporaryRedirect)
+			return
+		}
+		body, _ := io.ReadAll(r.Body) //nolint:errcheck
+		mu.Lock()
+		receivedBody = string(body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, _ := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	handleHTTPRequest(
+		context.Background(),
+		TunnelMessage{
+			ReqID:   "chunked-replay-test",
+			Payload: makeRawChunkedPostRequest("/webhook/"+testChannelID+testAPIUsersPath, `{"name":`, `"alice"}`),
+		},
+		wsConn, &wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID, 5*time.Second, false,
+	)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, want, receivedBody, "chunked body must be decoded and replayed through 307 redirect")
 }
 
 func TestHandleHTTPRequestQueryParamsForwarded(t *testing.T) {
