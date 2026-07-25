@@ -34,7 +34,7 @@ flowchart TD
 | `GET /traefik-config`              | Traefik の動的ルーティング設定（HTTP Provider）を返します                                          |
 | `GET /internal/channels`           | アクティブなチャンネル一覧を返します（マルチレプリカ構成でのピア間同期に使用）                    |
 | `GET /ws/{channel_id}`             | クライアント接続用の WebSocket アップグレードエンドポイント                                        |
-| `POST /webhook/{channel_id}[/...]` | 外部からの Webhook リクエストを受け取り、クライアントにトンネリングします                          |
+| `ANY /webhook/{channel_id}[/...]`  | 外部からの Webhook リクエスト（任意の HTTP メソッド）を受け取り、クライアントにトンネリングします  |
 | `GET /auth/login`                 | *(認証モード限定)* GitHub OAuth の同意ページへリダイレクトします                                   |
 | `GET /auth/callback`               | *(認証モード限定)* GitHub OAuth コールバック。セッション JWT を返します                            |
 
@@ -121,7 +121,7 @@ A tunnel to the server has been established.
 http://your-server.example.com/webhook/<channel_id>
 ```
 
-チャンネル ID 以降のパスサフィックスはそのままローカルアプリケーションへ転送されます。
+チャンネル ID 以降のパスサフィックスはそのままローカルアプリケーションへ転送されます。GET、POST、PUT、PATCH、DELETE など、任意の HTTP メソッドも ngrok と同様にそのまま転送されます。
 
 ## 認証
 
