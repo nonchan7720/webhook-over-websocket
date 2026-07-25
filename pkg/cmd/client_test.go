@@ -35,6 +35,19 @@ func makeRawPostRequest(path, body string) []byte {
 	))
 }
 
+// makeRawMethodRequest builds a raw HTTP/1.1 request for an arbitrary method with no body.
+func makeRawMethodRequest(method, path string) []byte {
+	return []byte(fmt.Sprintf("%s %s HTTP/1.1\r\nHost: example.com\r\n\r\n", method, path))
+}
+
+// makeRawMethodRequestWithBody builds a raw HTTP/1.1 request for an arbitrary method with a body.
+func makeRawMethodRequestWithBody(method, path, body string) []byte {
+	return []byte(fmt.Sprintf(
+		"%s %s HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+		method, path, len(body), body,
+	))
+}
+
 // wsServerPair creates a WebSocket server and returns the client connection and a
 // channel that receives all TunnelMessages written by handleHTTPRequest.
 func wsServerPair(t *testing.T) (*websocket.Conn, <-chan TunnelMessage) {
@@ -307,6 +320,87 @@ func TestHandleHTTPRequestRedirectQueryParamsPreserved(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, testAPIUsersPath+"/", receivedPath)
 	assert.Equal(t, "secret", receivedQuery.Get("token"))
+}
+
+func TestHandleHTTPRequestMethodPreserved(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		receivedMethod string
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedMethod = r.Method
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, _ := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	msg := TunnelMessage{
+		ReqID:   "delete-test",
+		Payload: makeRawMethodRequest(http.MethodDelete, "/webhook/"+testChannelID+testAPIUsersPath+"/1"),
+	}
+
+	handleHTTPRequest(
+		context.Background(),
+		msg,
+		wsConn,
+		&wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID,
+		5*time.Second,
+		false,
+	)
+
+	mu.Lock()
+	got := receivedMethod
+	mu.Unlock()
+	assert.Equal(t, http.MethodDelete, got)
+}
+
+func TestHandleHTTPRequestMethodAndBodyPreserved(t *testing.T) {
+	const reqBody = `{"name":"bob"}`
+
+	var (
+		mu             sync.Mutex
+		receivedMethod string
+		receivedBody   string
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body) //nolint:errcheck
+		mu.Lock()
+		receivedMethod = r.Method
+		receivedBody = string(body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, _ := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	msg := TunnelMessage{
+		ReqID:   "put-test",
+		Payload: makeRawMethodRequestWithBody(http.MethodPut, "/webhook/"+testChannelID+testAPIUsersPath+"/1", reqBody),
+	}
+
+	handleHTTPRequest(
+		context.Background(),
+		msg,
+		wsConn,
+		&wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID,
+		5*time.Second,
+		false,
+	)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, http.MethodPut, receivedMethod)
+	assert.Equal(t, reqBody, receivedBody)
 }
 
 func TestServerPathStripping(t *testing.T) {

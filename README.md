@@ -34,7 +34,7 @@ flowchart TD
 | `GET /traefik-config`              | Returns dynamic Traefik routing configuration (HTTP Provider)                         |
 | `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments) |
 | `GET /ws/{channel_id}`             | WebSocket upgrade endpoint for client connections                                     |
-| `POST /webhook/{channel_id}[/...]` | Receives external webhook requests and tunnels them to the client                     |
+| `ANY /webhook/{channel_id}[/...]`  | Receives external webhook requests (any HTTP method) and tunnels them to the client   |
 | `GET /auth/login`                 | *(auth mode only)* Redirects to the GitHub OAuth consent page                         |
 | `GET /auth/callback`               | *(auth mode only)* GitHub OAuth callback; returns a session JWT                       |
 
@@ -121,7 +121,7 @@ Set the webhook URL in the external service (e.g. GitHub, Stripe) to:
 http://your-server.example.com/webhook/<channel_id>
 ```
 
-Any path suffix after the channel ID is preserved and forwarded to your local application as-is.
+Any path suffix after the channel ID is preserved and forwarded to your local application as-is. Any HTTP method (GET, POST, PUT, PATCH, DELETE, etc.) is likewise forwarded unchanged, ngrok-like.
 
 ## Authentication
 

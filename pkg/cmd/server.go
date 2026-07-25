@@ -147,31 +147,7 @@ func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyc
 	if err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-
-	// Endpoint for clients to generate channelId upon startup
-	if authEnabled {
-		mux.Handle("GET /new", middlewares.JWTSession(handler.jwtSecret)(http.HandlerFunc(handler.handleNewChannel)))
-		mux.HandleFunc("GET /auth/client", handler.handleWaitHandler)
-		mux.HandleFunc("GET /auth/login", handler.handleAuthGitHub)
-		mux.HandleFunc("GET /auth/callback", handler.handleAuthCallback)
-		// Waiting for WebSocket connections from clients
-		mux.Handle("/ws/{channelId}", middlewares.JWTSession(handler.jwtSecret)(http.HandlerFunc(handler.handleWebSocket)))
-	} else {
-		mux.HandleFunc("GET /new", handler.handleNewChannel)
-		// Waiting for WebSocket connections from clients
-		mux.HandleFunc("/ws/{channelId}", handler.handleWebSocket)
-	}
-	// The HTTP Provider in Traefik periodically checks the configuration output endpoint.
-	mux.HandleFunc("GET /traefik-config", handler.handleTraefikConfig)
-	// Internal endpoint for peers to share information (additional)
-	mux.HandleFunc("GET /internal/channels", handler.handleInternalChannels)
-	// External webhook reception point via Traefik
-	mux.HandleFunc("POST /webhook/", handler.handleWebhook)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"OK"}`)) //nolint:errcheck
-	})
+	mux := handler.buildMux()
 	skipper := func(r *http.Request) bool {
 		switch r.URL.Path {
 		case "/healthz":
@@ -215,6 +191,38 @@ func executeServer(ctx context.Context, args *args.Server) error { //nolint: cyc
 	slog.InfoContext(tCtx, "Stop server")
 	defer cancel()
 	return srv.Shutdown(tCtx)
+}
+
+// buildMux constructs the HTTP route table for the server, including the
+// auth-enabled/disabled branch for /new and /ws/{channelId}. Extracted from
+// executeServer so routing behavior can be exercised directly in tests.
+func (h *serverHandle) buildMux() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	// Endpoint for clients to generate channelId upon startup
+	if h.authEnabled {
+		mux.Handle("GET /new", middlewares.JWTSession(h.jwtSecret)(http.HandlerFunc(h.handleNewChannel)))
+		mux.HandleFunc("GET /auth/client", h.handleWaitHandler)
+		mux.HandleFunc("GET /auth/login", h.handleAuthGitHub)
+		mux.HandleFunc("GET /auth/callback", h.handleAuthCallback)
+		// Waiting for WebSocket connections from clients
+		mux.Handle("/ws/{channelId}", middlewares.JWTSession(h.jwtSecret)(http.HandlerFunc(h.handleWebSocket)))
+	} else {
+		mux.HandleFunc("GET /new", h.handleNewChannel)
+		// Waiting for WebSocket connections from clients
+		mux.HandleFunc("/ws/{channelId}", h.handleWebSocket)
+	}
+	// The HTTP Provider in Traefik periodically checks the configuration output endpoint.
+	mux.HandleFunc("GET /traefik-config", h.handleTraefikConfig)
+	// Internal endpoint for peers to share information (additional)
+	mux.HandleFunc("GET /internal/channels", h.handleInternalChannels)
+	// External webhook reception point via Traefik. All HTTP methods are forwarded (ngrok-like).
+	mux.HandleFunc("/webhook/", h.handleWebhook)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"OK"}`)) //nolint:errcheck
+	})
+	return mux
 }
 
 type TunnelMessage struct {
@@ -666,6 +674,10 @@ func (h *serverHandle) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 func (h *serverHandle) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/")
 	channelID := parts[0]
+	if channelID == "" {
+		http.Error(w, "Client not connected", http.StatusNotFound)
+		return
+	}
 
 	h.activeChannelsMu.RLock()
 	client, exists := h.activeChannels[channelID]
