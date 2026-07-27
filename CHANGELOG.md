@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.8.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.7.0...v1.8.0) (2026-07-27)
+
+
+### Features
+
+* forward all HTTP methods on /webhook/ (ngrok-like arbitrary forwarding) ([#63](https://github.com/nonchan7720/webhook-over-websocket/issues/63)) ([dcd4825](https://github.com/nonchan7720/webhook-over-websocket/commit/dcd48254fef98715ff7a0c2379a4d0bfce7937d8))
+
+
+### Miscellaneous
+
+* **config:** migrate Renovate config ([#73](https://github.com/nonchan7720/webhook-over-websocket/issues/73)) ([d7aeba3](https://github.com/nonchan7720/webhook-over-websocket/commit/d7aeba3405c61a7ee8bb32097872e52f039aa77a))
+* **deps:** bump golang.org/x/net from 0.50.0 to 0.55.0 ([#56](https://github.com/nonchan7720/webhook-over-websocket/issues/56)) ([9d7aa2d](https://github.com/nonchan7720/webhook-over-websocket/commit/9d7aa2d9957ae1a341ec98af904274fce1b7d10c))
+* **deps:** update actions/checkout action to v6.0.3 ([#58](https://github.com/nonchan7720/webhook-over-websocket/issues/58)) ([65a3c1e](https://github.com/nonchan7720/webhook-over-websocket/commit/65a3c1e3463465fc6761cfb7586fe242bfbeb395))
+* **deps:** update actions/create-github-app-token action to v2.2.2 ([#59](https://github.com/nonchan7720/webhook-over-websocket/issues/59)) ([df8743e](https://github.com/nonchan7720/webhook-over-websocket/commit/df8743efe31c38c1a2fbea8be3dee71423b6b6c8))
+* **deps:** update actions/setup-go action to v6.5.0 ([#62](https://github.com/nonchan7720/webhook-over-websocket/issues/62)) ([e530b25](https://github.com/nonchan7720/webhook-over-websocket/commit/e530b2528b622c69131903fd4bf182f1a41c90ed))
+* **deps:** update docker/build-push-action action to v6.19.2 ([#65](https://github.com/nonchan7720/webhook-over-websocket/issues/65)) ([7f8ebda](https://github.com/nonchan7720/webhook-over-websocket/commit/7f8ebda96ff08d0debe1b1c10228f794df8c0ce9))
+* **deps:** update docker/login-action action to v3.7.0 ([#66](https://github.com/nonchan7720/webhook-over-websocket/issues/66)) ([ef8f987](https://github.com/nonchan7720/webhook-over-websocket/commit/ef8f98709d45b7208c3e25030d60863e35d118ce))
+* **deps:** update docker/setup-buildx-action action to v3.12.0 ([#67](https://github.com/nonchan7720/webhook-over-websocket/issues/67)) ([96debeb](https://github.com/nonchan7720/webhook-over-websocket/commit/96debebdf5861cbe29f8d0913d2be975d84b7dc1))
+* **deps:** update googleapis/release-please-action action to v4.4.1 ([#61](https://github.com/nonchan7720/webhook-over-websocket/issues/61)) ([3f18b96](https://github.com/nonchan7720/webhook-over-websocket/commit/3f18b96049260b7a3dcd597ce16007f7e4dbdc97))
+* **deps:** update googleapis/release-please-action action to v5 ([#83](https://github.com/nonchan7720/webhook-over-websocket/issues/83)) ([2ebff48](https://github.com/nonchan7720/webhook-over-websocket/commit/2ebff483272c963a8ca5550db664591681a153a8))
+* **deps:** update goreleaser/goreleaser-action action to v7 ([#84](https://github.com/nonchan7720/webhook-over-websocket/issues/84)) ([b7105b3](https://github.com/nonchan7720/webhook-over-websocket/commit/b7105b34ee589c912f0e3524de8263a30f76e758))
+
 ## [1.7.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.6.0...v1.7.0) (2026-06-23)
 
 
