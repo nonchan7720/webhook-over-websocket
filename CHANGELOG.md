@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.8.0...v1.9.0) (2026-07-28)
+
+
+### Features
+
+* **client:** add --follow-redirects flag to relay 3xx to the browser ([#85](https://github.com/nonchan7720/webhook-over-websocket/issues/85)) ([5be0561](https://github.com/nonchan7720/webhook-over-websocket/commit/5be05612f5635ff9d9beac7d4e324e3e5db9613a))
+
 ## [1.8.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.7.0...v1.8.0) (2026-07-27)
 
 
