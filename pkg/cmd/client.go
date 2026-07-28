@@ -35,6 +35,8 @@ type clientArgs struct {
 
 	transferRequestTimeout        time.Duration
 	disableTransferRequestTimeout bool
+
+	followRedirects bool
 }
 
 func clientCommand() *cobra.Command {
@@ -74,6 +76,12 @@ func clientCommand() *cobra.Command {
 		"disabled-transfer-request-timeout",
 		false,
 		"Disable the timeout when transfers to the local server",
+	)
+	flag.BoolVar(
+		&args.followRedirects,
+		"follow-redirects",
+		true,
+		"Follow redirects returned by the local server. Disable it to relay the 3xx response (and its Set-Cookie) to the browser as a plain proxy does",
 	)
 	_ = cmd.MarkFlagRequired("server-url") //nolint: errcheck
 	return cmd
@@ -219,6 +227,7 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 				channelID,
 				args.transferRequestTimeout,
 				args.disableTransferRequestTimeout,
+				args.followRedirects,
 			)
 		}
 	}()
@@ -289,6 +298,7 @@ func handleHTTPRequest(
 	channelID string,
 	timeout time.Duration,
 	disabledTimeout bool,
+	followRedirects bool,
 ) {
 	slog.Info(fmt.Sprintf("[ReqID: %s] Receive webhooks and forward them locally....", msg.ReqID))
 
@@ -344,6 +354,11 @@ func handleHTTPRequest(
 
 	// Send to local server
 	client := &http.Client{}
+	if !followRedirects {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
 	if !disabledTimeout && timeout > 0 {
 		client.Timeout = timeout
 	}

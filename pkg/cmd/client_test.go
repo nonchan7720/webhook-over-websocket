@@ -147,6 +147,7 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 				testChannelID,
 				5*time.Second,
 				false,
+				true,
 			)
 
 			mu.Lock()
@@ -194,6 +195,7 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 		testChannelID,
 		5*time.Second,
 		false,
+		true,
 	)
 
 	// First message contains the response headers (streaming protocol).
@@ -201,6 +203,61 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 	assert.Contains(t, string(firstMsg.Payload), "200 OK")
 	mu.Lock()
 	assert.Equal(t, testAPIUsersPath+"/", receivedPath)
+	mu.Unlock()
+}
+
+func TestHandleHTTPRequestRedirectNotFollowed(t *testing.T) {
+	// With followRedirects disabled the client must behave like a plain proxy:
+	// the 3xx is relayed as-is instead of being consumed locally. Otherwise the
+	// Set-Cookie riding on the redirect never reaches the browser and cookie-based
+	// authentication cannot establish a session.
+	var (
+		mu            sync.Mutex
+		receivedPaths []string
+	)
+	localServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedPaths = append(receivedPaths, r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == testAPIUsersPath {
+			w.Header().Set("Set-Cookie", "session=abc123; Path=/")
+			http.Redirect(w, r, testAPIUsersPath+"/", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer localServer.Close()
+
+	wsConn, respCh := wsServerPair(t)
+	var wsMutex sync.Mutex
+
+	msg := TunnelMessage{
+		ReqID:   "redirect-not-followed-test",
+		Payload: makeRawRequest("/webhook/" + testChannelID + testAPIUsersPath),
+	}
+
+	handleHTTPRequest(
+		context.Background(),
+		msg,
+		wsConn,
+		&wsMutex,
+		"http://"+localServer.Listener.Addr().String(),
+		testChannelID,
+		5*time.Second,
+		false,
+		false,
+	)
+
+	// The 3xx itself is relayed, carrying Location and Set-Cookie.
+	firstMsg := <-respCh
+	header := string(firstMsg.Payload)
+	assert.Contains(t, header, "302 Found")
+	assert.Contains(t, header, "Location: "+testAPIUsersPath+"/")
+	assert.Contains(t, header, "Set-Cookie: session=abc123; Path=/")
+
+	// The redirect target must not be requested by the client.
+	mu.Lock()
+	assert.Equal(t, []string{testAPIUsersPath}, receivedPaths)
 	mu.Unlock()
 }
 
@@ -237,7 +294,7 @@ func TestHandleHTTPRequestRedirectBodyReplayed(t *testing.T) {
 		TunnelMessage{ReqID: "body-replay-test", Payload: makeRawPostRequest("/webhook/"+testChannelID+testAPIUsersPath, reqBody)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
-		testChannelID, 5*time.Second, false,
+		testChannelID, 5*time.Second, false, true,
 	)
 
 	mu.Lock()
@@ -271,7 +328,7 @@ func TestHandleHTTPRequestQueryParamsForwarded(t *testing.T) {
 		TunnelMessage{ReqID: "query-test", Payload: []byte(rawReq)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
-		testChannelID, 5*time.Second, false,
+		testChannelID, 5*time.Second, false, true,
 	)
 
 	mu.Lock()
@@ -313,7 +370,7 @@ func TestHandleHTTPRequestRedirectQueryParamsPreserved(t *testing.T) {
 		TunnelMessage{ReqID: "redirect-query-test", Payload: []byte(rawReq)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
-		testChannelID, 5*time.Second, false,
+		testChannelID, 5*time.Second, false, true,
 	)
 
 	mu.Lock()
@@ -352,6 +409,7 @@ func TestHandleHTTPRequestMethodPreserved(t *testing.T) {
 		testChannelID,
 		5*time.Second,
 		false,
+		true,
 	)
 
 	mu.Lock()
@@ -395,6 +453,7 @@ func TestHandleHTTPRequestMethodAndBodyPreserved(t *testing.T) {
 		testChannelID,
 		5*time.Second,
 		false,
+		true,
 	)
 
 	mu.Lock()
