@@ -147,6 +147,7 @@ func TestHandleHTTPRequestPathForwarding(t *testing.T) {
 				testChannelID,
 				5*time.Second,
 				false,
+				true,
 			)
 
 			mu.Lock()
@@ -194,6 +195,7 @@ func TestHandleHTTPRequestRedirectFollowed(t *testing.T) {
 		testChannelID,
 		5*time.Second,
 		false,
+		true,
 	)
 
 	// First message contains the response headers (streaming protocol).
@@ -237,7 +239,7 @@ func TestHandleHTTPRequestRedirectBodyReplayed(t *testing.T) {
 		TunnelMessage{ReqID: "body-replay-test", Payload: makeRawPostRequest("/webhook/"+testChannelID+testAPIUsersPath, reqBody)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
-		testChannelID, 5*time.Second, false,
+		testChannelID, 5*time.Second, false, true,
 	)
 
 	mu.Lock()
@@ -271,7 +273,7 @@ func TestHandleHTTPRequestQueryParamsForwarded(t *testing.T) {
 		TunnelMessage{ReqID: "query-test", Payload: []byte(rawReq)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
-		testChannelID, 5*time.Second, false,
+		testChannelID, 5*time.Second, false, true,
 	)
 
 	mu.Lock()
@@ -313,7 +315,7 @@ func TestHandleHTTPRequestRedirectQueryParamsPreserved(t *testing.T) {
 		TunnelMessage{ReqID: "redirect-query-test", Payload: []byte(rawReq)},
 		wsConn, &wsMutex,
 		"http://"+localServer.Listener.Addr().String(),
-		testChannelID, 5*time.Second, false,
+		testChannelID, 5*time.Second, false, true,
 	)
 
 	mu.Lock()
@@ -352,6 +354,7 @@ func TestHandleHTTPRequestMethodPreserved(t *testing.T) {
 		testChannelID,
 		5*time.Second,
 		false,
+		true,
 	)
 
 	mu.Lock()
@@ -395,6 +398,7 @@ func TestHandleHTTPRequestMethodAndBodyPreserved(t *testing.T) {
 		testChannelID,
 		5*time.Second,
 		false,
+		true,
 	)
 
 	mu.Lock()
