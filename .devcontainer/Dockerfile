@@ -1,4 +1,4 @@
-FROM golang:1.25.6-trixie
+FROM golang:1.26.4-trixie
 
 RUN apt-get update \
   && apt-get install --no-install-recommends -y \
