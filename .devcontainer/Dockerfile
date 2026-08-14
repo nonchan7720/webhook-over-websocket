@@ -1,4 +1,4 @@
-FROM golang:1.25.6-trixie
+FROM golang:1.26.4-trixie@sha256:68b7145ec43d1820b9a56704554b53d1520aa2a15cb5233e374188a31b2a1bce
 
 RUN apt-get update \
   && apt-get install --no-install-recommends -y \
