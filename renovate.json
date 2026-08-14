@@ -1,8 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    ":timezone(Asia/Tokyo)"
+    "github>nonchan7720/renovate-config:golang"
   ],
   "minimumReleaseAge": "7 days"
 }
