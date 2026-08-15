@@ -41,7 +41,7 @@ RUN cd /usr/local/src \
   && make prefix=/usr/local all -j "$(nproc)" \
   && make prefix=/usr/local install
 
-COPY --from=traefik:v3.6.8@sha256:90099f8948c828ecf0ababd711a4359a2443eba12261c1df2f548a3b1d815938 /usr/local/bin/traefik /usr/local/bin/traefik
+COPY --from=traefik:v3.7.10@sha256:9c3b91d5fb7770853ca5c1124a23c34bf2d9b47ffaebeab2614cbaf410dcb2ac /usr/local/bin/traefik /usr/local/bin/traefik
 
 USER $USER_NAME
 
