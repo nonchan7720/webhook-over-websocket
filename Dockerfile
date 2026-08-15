@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   CGO_ENABLED=0 go build -o webhook-over-websocket \
   && chmod +x /workspace/webhook-over-websocket
 
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
 ENV TZ=Asia/Tokyo
 
 COPY --from=app-builder --chown=nonroot:nonroot /workspace/webhook-over-websocket /usr/local/bin/webhook-over-websocket
