@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.9.0...v1.9.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* **deps:** update go minor dependencies ([#90](https://github.com/nonchan7720/webhook-over-websocket/issues/90)) ([2554c52](https://github.com/nonchan7720/webhook-over-websocket/commit/2554c523677de34f65f1f37cd81bcfaa8a9ead0a))
+
+
+### Miscellaneous
+
+* **deps:** pin dependencies ([#88](https://github.com/nonchan7720/webhook-over-websocket/issues/88)) ([cf9d545](https://github.com/nonchan7720/webhook-over-websocket/commit/cf9d545917e878dbffe579237b5ab69a3f089886))
+* **deps:** update golang version ([#89](https://github.com/nonchan7720/webhook-over-websocket/issues/89)) ([cc01375](https://github.com/nonchan7720/webhook-over-websocket/commit/cc013751cff400bb4612ba0f1a4c6fdc41f37580))
+
 ## [1.9.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.8.0...v1.9.0) (2026-07-28)
 
 
