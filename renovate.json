@@ -3,5 +3,24 @@
   "extends": [
     "github>nonchan7720/renovate-config:golang"
   ],
-  "minimumReleaseAge": "7 days"
+  "minimumReleaseAge": "7 days",
+  "packageRules": [
+    {
+      "description": "go.mod の go ディレクティブと mise の Go を Docker の golang イメージのタグ基準で更新し、Dockerfile と同じ golang version グループにまとめる（Docker イメージの公開が Go 本体のリリースより遅れるため、Docker 側に揃える）",
+      "matchManagers": [
+        "gomod",
+        "mise"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "overrideDatasource": "docker",
+      "overridePackageName": "golang",
+      "versioning": "docker",
+      "extractVersion": "^(?<version>\\S+)$",
+      "rangeStrategy": "bump",
+      "pinDigests": false,
+      "groupName": "golang version"
+    }
+  ]
 }

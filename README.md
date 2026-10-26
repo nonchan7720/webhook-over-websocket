@@ -200,7 +200,21 @@ With this setup, Traefik can query any single replica (via the Kubernetes servic
 
 ## Development
 
-The repository includes a Docker Compose file for local development:
+### Tooling with mise
+
+Go and golangci-lint are declared in [`mise.toml`](mise.toml), so [mise](https://mise.jdx.dev/) installs the same versions CI uses:
+
+```bash
+mise install
+make test   # go test -race ./...
+make lint   # golangci-lint run ./...
+```
+
+CI (`.github/workflows/test.yaml`) sets up the tools from `mise.toml` as well, so bumping a version there updates both local and CI environments. Claude Code on the web runs `scripts/mise-setup.sh` on session start to install them.
+
+### Docker Compose
+
+The repository also includes a Docker Compose file for local development:
 
 ```bash
 docker compose up -d
