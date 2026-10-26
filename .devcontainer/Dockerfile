@@ -1,4 +1,4 @@
-FROM golang:1.26.4-trixie@sha256:68b7145ec43d1820b9a56704554b53d1520aa2a15cb5233e374188a31b2a1bce
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4
 
 RUN apt-get update \
   && apt-get install --no-install-recommends -y \
@@ -22,7 +22,7 @@ RUN apt-get update \
   && go install github.com/fatih/gomodifytags@v1.17.0 \
   && go install github.com/josharian/impl@v1.2.0 \
   && go install github.com/haya14busa/goplay/cmd/goplay@v1.0.0 \
-  && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.0 \
+  && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 \
   && go install golang.org/x/tools/gopls@v0.20.0 \
   && go install github.com/go-delve/delve/cmd/dlv@v1.25.2
 
