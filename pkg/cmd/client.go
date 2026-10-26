@@ -244,7 +244,10 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 		slog.Info("Context cancelled, waiting for cleanup...")
 		// Wait for termination from errCh
 		select {
-		case <-errCh:
+		case err := <-errCh:
+			if err != nil {
+				slog.Debug("client stopped", slog.String("error", err.Error()))
+			}
 		case <-time.After(5 * time.Second):
 			slog.Warn("Cleanup timeout")
 		}
