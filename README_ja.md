@@ -193,7 +193,21 @@ providers:
 
 ## 開発
 
-リポジトリにはローカル開発用の Docker Compose ファイルが含まれています：
+### mise によるツール管理
+
+Go と golangci-lint は [`mise.toml`](mise.toml) で宣言されているため、[mise](https://mise.jdx.dev/) で CI と同じバージョンをインストールできます：
+
+```bash
+mise install
+make test   # go test -race ./...
+make lint   # golangci-lint run ./...
+```
+
+CI (`.github/workflows/test.yaml`) も `mise.toml` からツールをセットアップするので、バージョンを上げるときは `mise.toml` を変更すればローカルと CI の両方に反映されます。Claude Code on the web ではセッション開始時に `scripts/mise-setup.sh` が実行され、同じツールがインストールされます。
+
+### Docker Compose
+
+リポジトリにはローカル開発用の Docker Compose ファイルも含まれています：
 
 ```bash
 docker compose up -d
