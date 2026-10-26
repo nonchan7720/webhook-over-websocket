@@ -191,6 +191,8 @@ providers:
 
 この設定により、Traefik は（Kubernetes サービス経由で）任意のレプリカに問い合わせるだけで、クラスター全体のすべてのチャンネルのルーティング情報を受け取ることができます。
 
+Traefik を各サーバー Pod のサイドカーとして動かす Kubernetes のサンプルは [`example/kubernetes`](example/kubernetes) にあります。
+
 ## 開発
 
 リポジトリにはローカル開発用の Docker Compose ファイルが含まれています：

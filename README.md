@@ -198,6 +198,8 @@ providers:
 
 With this setup, Traefik can query any single replica (via the Kubernetes service), and that replica will return routing information for all channels across the entire cluster.
 
+A complete Kubernetes example with Traefik running as a sidecar in each server Pod is available in [`example/kubernetes`](example/kubernetes).
+
 ## Development
 
 The repository includes a Docker Compose file for local development:
