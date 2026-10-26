@@ -123,6 +123,7 @@ spec:
               drop:
                 - ALL
       volumes:
+        # base/kustomization.yaml の configMapGenerator で生成される
         - name: traefik-config
           configMap:
             name: webhook-over-websocket-traefik

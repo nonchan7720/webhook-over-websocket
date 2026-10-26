@@ -16,12 +16,29 @@ flowchart LR
 
 ## 構成
 
-| ファイル                 | 内容                                                                                         |
-| ------------------------ | -------------------------------------------------------------------------------------------- |
-| `deployment.yaml`        | `server` コンテナ + Traefik native sidecar (`initContainers` + `restartPolicy: Always`)      |
-| `service.yaml`           | 外部公開用 ClusterIP Service (→ Traefik :8000) と memberlist 用 headless Service               |
-| `traefik-configmap.yaml` | Traefik の静的設定 (HTTP Provider → `127.0.0.1:8080`) とフォールバック用の動的設定            |
-| `kustomization.yaml`     | 上記をまとめて適用するための Kustomization                                                    |
+Kustomize の base / overlay 構成です。
+
+```
+example/kubernetes/
+├── base/
+│   ├── kustomization.yaml   # Deployment, Service と Traefik 設定の configMapGenerator
+│   ├── deployment.yaml      # server コンテナ + Traefik native sidecar
+│   ├── service.yaml         # 外部公開用 ClusterIP Service と memberlist 用 headless Service
+│   └── traefik/
+│       ├── static.yaml      # Traefik 静的設定 (HTTP Provider → 127.0.0.1:8080)
+│       └── dynamic.yaml     # フォールバック用の動的設定 (/new, /auth/* などをローカルの server へ)
+└── overlays/
+    └── dev/
+        ├── kustomization.yaml   # namespace、イメージタグ、レプリカ数の上書き
+        └── namespace.yaml
+```
+
+| ファイル                   | 内容                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| `base/deployment.yaml`     | `server` コンテナ + Traefik native sidecar (`initContainers` + `restartPolicy: Always`)      |
+| `base/service.yaml`        | 外部公開用 ClusterIP Service (→ Traefik :8000) と memberlist 用 headless Service              |
+| `base/traefik/*.yaml`      | Traefik の設定。`configMapGenerator` で ConfigMap 化され、変更するとハッシュ付きの名前が変わって Deployment が再ロールアウトされる |
+| `overlays/dev/`            | namespace の作成、イメージタグの固定 (`images`)、レプリカ数 (`replicas`) の上書き例           |
 
 ### リクエストの流れ
 
@@ -34,14 +51,21 @@ flowchart LR
 ## デプロイ
 
 ```bash
-kubectl apply -k example/kubernetes
+# 生成されるマニフェストの確認
+kubectl kustomize example/kubernetes/overlays/dev
+
+# 適用
+kubectl apply -k example/kubernetes/overlays/dev
 ```
+
+環境ごとの差分は overlay 側で上書きしてください。`overlays/dev/kustomization.yaml` をコピーして、`namespace` や `images[].newTag`、`replicas[].count` を変えるだけで別環境を作れます。
+Traefik の設定を変える場合は `base/traefik/*.yaml` を編集します。ConfigMap 名にハッシュが付くので、適用すれば Pod が自動的に入れ替わります。
 
 Kubernetes 1.29 以降が必要です (native sidecar)。それより古い場合は `initContainers` 配下の `traefik` を `containers` に移動し、`restartPolicy: Always` を削除してください。
 
 外部公開は環境に合わせて Ingress / Gateway API / `type: LoadBalancer` などを `webhook-over-websocket` Service に向けてください。
 
-別 namespace にデプロイする場合は `--peer-domain` を FQDN (`webhook-over-websocket-headless.<namespace>.svc.cluster.local`) にしてください。
+`--peer-domain` は短い名前 (`webhook-over-websocket-headless`) を指定しているので、overlay で `namespace` を変えてもそのまま動きます。別 namespace の Service を指したい場合だけ FQDN (`webhook-over-websocket-headless.<namespace>.svc.cluster.local`) にしてください。
 
 ## 認証を有効にする場合
 

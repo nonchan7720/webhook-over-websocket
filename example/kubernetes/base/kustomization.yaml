@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+
+# Traefik サイドカーの設定を ConfigMap として生成する。
+# 名前にはハッシュが付くため、設定を変えると Deployment も再ロールアウトされる。
+configMapGenerator:
+  - name: webhook-over-websocket-traefik
+    files:
+      - traefik/static.yaml
+      - traefik/dynamic.yaml
