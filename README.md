@@ -31,8 +31,8 @@ flowchart TD
 | Endpoint                           | Description                                                                           |
 | ---------------------------------- | ------------------------------------------------------------------------------------- |
 | `GET /new`                         | Issues a new `channel_id` (UUID) for a client to use                                  |
-| `GET /traefik-config`              | Returns dynamic Traefik routing configuration (HTTP Provider)                         |
-| `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments) |
+| `GET /traefik-config`              | Returns dynamic Traefik routing configuration (HTTP Provider). *Memberlist backend only* |
+| `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments). *Memberlist backend only* |
 | `GET /ws/{channel_id}`             | WebSocket upgrade endpoint for client connections                                     |
 | `ANY /webhook/{channel_id}[/...]`  | Receives external webhook requests (any HTTP method) and tunnels them to the client   |
 | `GET /auth/login`                 | *(auth mode only)* Redirects to the GitHub OAuth consent page                         |
@@ -77,10 +77,17 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 | Flag                         | Default   | Description                                                            |
 | ---------------------------- | --------- | ---------------------------------------------------------------------- |
 | `--port`, `-p`               | `8080`    | Port to listen on                                                      |
-| `--peer-domain`              | *(empty)* | Peer domain name for memberlist cluster discovery                      |
 | `--cleanup-duration`         | `5m`      | Interval for cleaning up inactive channel sessions                     |
-| `--memberlist-port`          | `7946`    | Port for memberlist gossip protocol                                    |
-| `--memberlist-sync-duration` | `5s`      | Interval for memberlist cluster synchronization                        |
+| `--cluster-backend`          | `memberlist` | How replicas share state: `memberlist` or `redis` (see [Clustering and High Availability](#clustering-and-high-availability)) |
+| `--peer-domain`              | *(empty)* | *(memberlist)* Peer domain name for memberlist cluster discovery       |
+| `--memberlist-port`          | `7946`    | *(memberlist)* Port for memberlist gossip protocol                     |
+| `--memberlist-sync-duration` | `5s`      | *(memberlist)* Interval for memberlist cluster synchronization         |
+| `--redis-url`                | *(empty)* | *(redis)* Redis URL, e.g. `redis://[user:password@]host:6379/0` or `rediss://...` for TLS (required with `--cluster-backend redis`) |
+| `--redis-key-prefix`         | `webhook-over-websocket` | *(redis)* Prefix of the Redis keys and Pub/Sub channels |
+| `--redis-heartbeat-duration` | `5s`      | *(redis)* Interval for refreshing the ownership of connected channels  |
+| `--redis-cluster-mode`       | `false`   | *(redis)* Connect using the Redis Cluster protocol                     |
+| `--redis-tls-ca-file`        | *(empty)* | *(redis)* CA certificate file to verify the Redis server (enables TLS) |
+| `--redis-tls-insecure-skip-verify` | `false` | *(redis)* Skip verifying the Redis server certificate (enables TLS; for testing only) |
 | `--github-client-id`         | *(empty)* | GitHub OAuth App client ID — **enables authentication when set**       |
 | `--github-client-secret`     | *(empty)* | GitHub OAuth App client secret (required when `--github-client-id` is set) |
 | `--github-org`               | *(empty)* | Required GitHub organization — only members are allowed access         |
@@ -198,6 +205,34 @@ providers:
 
 With this setup, Traefik can query any single replica (via the Kubernetes service), and that replica will return routing information for all channels across the entire cluster.
 
+### Redis Pub/Sub
+
+The memberlist backend requires that the replicas can reach each other directly (gossip and `/internal/channels`) and that Traefik can route to every replica. When that is not possible — for example, replicas running in multiple clusters in an active-active setup — use the Redis backend instead. All traffic between replicas then goes through Redis, and neither Traefik nor memberlist is needed: a plain load balancer can send any request to any replica.
+
+**How it works:**
+
+1. `GET /new` registers the issued channel in Redis, so `/ws/{channel_id}` can be accepted by any replica.
+2. The replica that accepts the WebSocket registers itself as the owner of the channel and keeps the ownership alive with a heartbeat (`--redis-heartbeat-duration`). The registration is removed when the client disconnects.
+3. When a webhook arrives at a replica that does not hold the WebSocket, the request is published to the owner's channel in Redis. The owner sends it to the client, and the response (headers, body chunks and EOF) is published back and streamed to the caller.
+4. Authentication results (`/auth/callback`) are broadcast to all replicas through Redis as well.
+
+Messages between replicas use a compact binary format, and payloads larger than 1 KiB are compressed with zstd when it makes them smaller. This keeps the Pub/Sub output buffers in Redis small.
+
+**Configuration example:**
+
+```bash
+webhook-over-websocket server \
+  --port 8080 \
+  --cluster-backend redis \
+  --redis-url rediss://user:password@redis.example.com:6379/0
+```
+
+- Use `rediss://` (or `--redis-tls-ca-file`) for TLS. Managed Redis services with in-transit encryption work with `rediss://` as is.
+- Use `--redis-cluster-mode` when Redis runs in cluster mode.
+- `/traefik-config` and `/internal/channels` are not served with the Redis backend.
+
+**Limitations:** Redis Pub/Sub delivers messages at most once. If the replica holding the WebSocket goes away while a webhook is in flight, the caller receives `504 Gateway Timeout`.
+
 ## Development
 
 ### Tooling with mise
@@ -208,6 +243,7 @@ Go and golangci-lint are declared in [`mise.toml`](mise.toml), so [mise](https:/
 mise install
 make test   # go test -race ./...
 make lint   # golangci-lint run ./...
+make e2e    # end-to-end tests (tests/e2e) with the Postman CLI, for both the memberlist and Redis backends
 ```
 
 CI (`.github/workflows/test.yaml`) sets up the tools from `mise.toml` as well, so bumping a version there updates both local and CI environments. Claude Code on the web runs `scripts/mise-setup.sh` on session start to install them.

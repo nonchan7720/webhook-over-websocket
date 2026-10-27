@@ -31,8 +31,8 @@ flowchart TD
 | エンドポイント                     | 説明                                                                                              |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `GET /new`                         | クライアントが使用する新しい `channel_id`（UUID）を発行します                                      |
-| `GET /traefik-config`              | Traefik の動的ルーティング設定（HTTP Provider）を返します                                          |
-| `GET /internal/channels`           | アクティブなチャンネル一覧を返します（マルチレプリカ構成でのピア間同期に使用）                    |
+| `GET /traefik-config`              | Traefik の動的ルーティング設定（HTTP Provider）を返します。*memberlist バックエンドのみ*           |
+| `GET /internal/channels`           | アクティブなチャンネル一覧を返します（マルチレプリカ構成でのピア間同期に使用）。*memberlist バックエンドのみ* |
 | `GET /ws/{channel_id}`             | クライアント接続用の WebSocket アップグレードエンドポイント                                        |
 | `ANY /webhook/{channel_id}[/...]`  | 外部からの Webhook リクエスト（任意の HTTP メソッド）を受け取り、クライアントにトンネリングします  |
 | `GET /auth/login`                 | *(認証モード限定)* GitHub OAuth の同意ページへリダイレクトします                                   |
@@ -77,10 +77,17 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 | フラグ                         | デフォルト | 説明                                                                                    |
 | ------------------------------ | ---------- | --------------------------------------------------------------------------------------- |
 | `--port`, `-p`                 | `8080`     | リッスンするポート番号                                                                   |
-| `--peer-domain`                | *(空)*     | memberlist クラスター探索用のピアドメイン名                                              |
 | `--cleanup-duration`           | `5m`       | 非アクティブなチャンネルセッションのクリーンアップ間隔                                   |
-| `--memberlist-port`            | `7946`     | memberlist ゴシッププロトコル用ポート                                                    |
-| `--memberlist-sync-duration`   | `5s`       | memberlist クラスター同期の間隔                                                          |
+| `--cluster-backend`            | `memberlist` | レプリカ間で状態を共有する方式。`memberlist` または `redis`（[クラスタリングと高可用性](#クラスタリングと高可用性)を参照） |
+| `--peer-domain`                | *(空)*     | *(memberlist)* memberlist クラスター探索用のピアドメイン名                               |
+| `--memberlist-port`            | `7946`     | *(memberlist)* memberlist ゴシッププロトコル用ポート                                     |
+| `--memberlist-sync-duration`   | `5s`       | *(memberlist)* memberlist クラスター同期の間隔                                           |
+| `--redis-url`                  | *(空)*     | *(redis)* Redis の URL。例: `redis://[user:password@]host:6379/0`、TLS は `rediss://...`（`--cluster-backend redis` では必須） |
+| `--redis-key-prefix`           | `webhook-over-websocket` | *(redis)* Redis のキーと Pub/Sub チャンネルの接頭辞                  |
+| `--redis-heartbeat-duration`   | `5s`       | *(redis)* 接続中チャンネルの所有者登録を延長する間隔                                     |
+| `--redis-cluster-mode`         | `false`    | *(redis)* Redis Cluster プロトコルで接続します                                           |
+| `--redis-tls-ca-file`          | *(空)*     | *(redis)* Redis サーバーの証明書を検証する CA 証明書ファイル（TLS が有効になります）     |
+| `--redis-tls-insecure-skip-verify` | `false` | *(redis)* Redis サーバーの証明書検証を省略します（TLS が有効になります。テスト用）      |
 | `--github-client-id`           | *(空)*     | GitHub OAuth App のクライアント ID — **設定すると認証が有効になります**                  |
 | `--github-client-secret`       | *(空)*     | GitHub OAuth App のクライアントシークレット（`--github-client-id` 設定時は必須）         |
 | `--github-org`                 | *(空)*     | アクセスを許可する GitHub 組織名（省略時は組織チェックなし）                             |
@@ -191,6 +198,34 @@ providers:
 
 この設定により、Traefik は（Kubernetes サービス経由で）任意のレプリカに問い合わせるだけで、クラスター全体のすべてのチャンネルのルーティング情報を受け取ることができます。
 
+### Redis Pub/Sub
+
+memberlist バックエンドは、レプリカ同士が直接通信できること（ゴシップと `/internal/channels`）と、Traefik がすべてのレプリカへルーティングできることを前提にしています。複数のクラスターにまたがるアクティブ・アクティブ構成など、それができない環境では Redis バックエンドを使います。レプリカ間の通信はすべて Redis を経由するため、Traefik も memberlist も不要で、通常のロードバランサーがどのレプリカにリクエストを振り分けても動作します。
+
+**仕組み:**
+
+1. `GET /new` で発行したチャンネルを Redis に登録するので、`/ws/{channel_id}` はどのレプリカでも受け付けられます。
+2. WebSocket を受け付けたレプリカは、自身をそのチャンネルの所有者として登録し、ハートビート（`--redis-heartbeat-duration`）で登録を維持します。クライアントが切断すると登録は削除されます。
+3. WebSocket を持たないレプリカに Webhook が届くと、リクエストは Redis 上の所有者用チャンネルに publish されます。所有者はそれをクライアントへ送り、レスポンス（ヘッダー、ボディのチャンク、EOF）も同じく publish で戻され、呼び出し元へストリーミングされます。
+4. 認証結果（`/auth/callback`）も Redis を通じて全レプリカにブロードキャストされます。
+
+レプリカ間のメッセージはコンパクトなバイナリ形式で、1 KiB を超えるペイロードは zstd で小さくなる場合に圧縮されます。これにより Redis の Pub/Sub 出力バッファを小さく保ちます。
+
+**設定例:**
+
+```bash
+webhook-over-websocket server \
+  --port 8080 \
+  --cluster-backend redis \
+  --redis-url rediss://user:password@redis.example.com:6379/0
+```
+
+- TLS を使う場合は `rediss://`（または `--redis-tls-ca-file`）を指定します。通信の暗号化が有効なマネージド Redis サービスは `rediss://` のままで接続できます。
+- Redis がクラスターモードで動作している場合は `--redis-cluster-mode` を指定します。
+- Redis バックエンドでは `/traefik-config` と `/internal/channels` は提供されません。
+
+**制約:** Redis Pub/Sub の配送は最大 1 回です。Webhook の処理中に WebSocket を持つレプリカが停止した場合、呼び出し元には `504 Gateway Timeout` が返ります。
+
 ## 開発
 
 ### mise によるツール管理
@@ -201,6 +236,7 @@ Go と golangci-lint は [`mise.toml`](mise.toml) で宣言されているため
 mise install
 make test   # go test -race ./...
 make lint   # golangci-lint run ./...
+make e2e    # Postman CLI による E2E テスト（tests/e2e）。memberlist と Redis の両バックエンドを検証します
 ```
 
 CI (`.github/workflows/test.yaml`) も `mise.toml` からツールをセットアップするので、バージョンを上げるときは `mise.toml` を変更すればローカルと CI の両方に反映されます。Claude Code on the web ではセッション開始時に `scripts/mise-setup.sh` が実行され、同じツールがインストールされます。
