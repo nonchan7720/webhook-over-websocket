@@ -135,7 +135,7 @@ func (h *MemberlistHandler) handleInternalChannels(w http.ResponseWriter, r *htt
 		// Create a router for WS even if it is not connected (already issued).
 		wsChannels = append(wsChannels, id)
 		// Create a router for webhooks only when it is actually connected (isActive).
-		if client.isActive() {
+		if client.connected() {
 			webhookChannels = append(webhookChannels, id)
 		}
 	}
@@ -166,7 +166,7 @@ func (h *MemberlistHandler) handleTraefikConfig(w http.ResponseWriter, r *http.R
 	h.activeChannelsMu.RLock()
 	for id, client := range h.activeChannels {
 		myWsChannels = append(myWsChannels, id) // All WS items are added.
-		if client.isActive() {
+		if client.connected() {
 			myWebhookChannels = append(myWebhookChannels, id) // For webhooks, add only while connected
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,12 +34,20 @@ type TunnelMessage struct {
 type ClientConn struct {
 	wsConn *websocket.Conn
 	mu     sync.Mutex // To prevent simultaneous writes to WebSocket
+	// attached mirrors wsConn != nil so that it can be read without waiting for a write holding mu.
+	attached atomic.Bool
 
 	subject string
 }
 
+// isActive must be called while holding c.mu.
 func (c *ClientConn) isActive() bool {
 	return c.wsConn != nil
+}
+
+// connected reports whether the WebSocket is attached. It is safe to call without holding c.mu.
+func (c *ClientConn) connected() bool {
+	return c.attached.Load()
 }
 
 type Options struct {
@@ -146,7 +155,7 @@ func (h *base) localClient(channelID string) *ClientConn {
 	h.activeChannelsMu.RLock()
 	defer h.activeChannelsMu.RUnlock()
 	client, exists := h.activeChannels[channelID]
-	if !exists || !client.isActive() {
+	if !exists || !client.connected() {
 		return nil
 	}
 	return client
@@ -190,6 +199,7 @@ func (h *base) upgradeWebSocket(w http.ResponseWriter, r *http.Request, clientCo
 		return nil
 	}
 	clientConn.wsConn = conn
+	clientConn.attached.Store(true)
 	clientConn.mu.Unlock()
 	return conn
 }
@@ -526,7 +536,7 @@ func (h *base) CleanNonActiveSession() {
 	h.activeChannelsMu.RLock()
 	nonActiveSession := make([]string, 0, len(h.activeChannels))
 	for id, client := range h.activeChannels {
-		if !client.isActive() {
+		if !client.connected() {
 			nonActiveSession = append(nonActiveSession, id)
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,4 +50,23 @@ func TestNotifyAuthMessageDoesNotBlockWithoutReceiver(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("notifyMsg blocked without a receiver")
 	}
+}
+
+func TestLocalClientDoesNotRaceWithUpgrade(t *testing.T) {
+	h := newBase(Options{ServerCtx: context.Background()}, nil)
+	client := &ClientConn{}
+	h.activeChannels["ch"] = client
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// upgradeWebSocket attaches the connection under the client's lock.
+		client.mu.Lock()
+		client.wsConn = &websocket.Conn{}
+		client.attached.Store(true)
+		client.mu.Unlock()
+	}()
+	_ = h.localClient("ch")
+	h.CleanNonActiveSession()
+	<-done
 }
