@@ -14,7 +14,7 @@
 #   6. postman collection run: folders 04, 06, 07
 #
 # Pub/Sub (redis) mode:
-#   7. start redis (tests/e2e/redis) and two servers (node A, node B) with
+#   7. start a real Redis in Docker and two servers (node A, node B) with
 #      --cluster-backend redis, and the clients connected to node B
 #   8. postman collection run against node A: folders 02, 11
 #      (every webhook is relayed from node A to node B through redis)
@@ -28,6 +28,9 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COLLECTION="${SCRIPT_DIR}/webhook-over-websocket.postman_collection.json"
 GO="${GO:-go}"
 POSTMAN="${POSTMAN:-postman}"
+# Real Redis for the Pub/Sub phase; override with E2E_REDIS_IMAGE.
+REDIS_IMAGE="${E2E_REDIS_IMAGE:-redis:8.2.11-alpine}"
+REDIS_CONTAINER="wow-e2e-redis-$$"
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wow-e2e.XXXXXX")"
 PIDS=()
@@ -42,6 +45,10 @@ cleanup() {
 	for pid in "${PIDS[@]:-}"; do
 		[ -n "${pid}" ] && wait "${pid}" 2>/dev/null || true
 	done
+	if docker container inspect "${REDIS_CONTAINER}" >/dev/null 2>&1; then
+		docker logs "${REDIS_CONTAINER}" >"${WORK_DIR}/redis.log" 2>&1 || true
+		docker rm -f "${REDIS_CONTAINER}" >/dev/null 2>&1 || true
+	fi
 	if [ "${STATUS}" -ne 0 ]; then
 		for f in "${WORK_DIR}"/*.log; do
 			[ -f "${f}" ] || continue
@@ -84,8 +91,7 @@ proc_alive() { kill -0 "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------- build
 log "building binaries into ${WORK_DIR}"
-(cd "${ROOT_DIR}" && "${GO}" build -o "${WORK_DIR}/wow" . && "${GO}" build -o "${WORK_DIR}/target" ./tests/e2e/target &&
-	"${GO}" build -o "${WORK_DIR}/redis" ./tests/e2e/redis)
+(cd "${ROOT_DIR}" && "${GO}" build -o "${WORK_DIR}/wow" . && "${GO}" build -o "${WORK_DIR}/target" ./tests/e2e/target)
 WOW="${WORK_DIR}/wow"
 
 # Avoid picking up WOW_* configuration from the caller's environment.
@@ -179,9 +185,10 @@ NODE_A_URL="http://127.0.0.1:${NODE_A_PORT}"
 NODE_B_URL="http://127.0.0.1:${NODE_B_PORT}"
 PUBSUB_DEAD_CHANNEL="e2e-pubsub-dead-target-$$"
 
-"${WORK_DIR}/redis" -addr "127.0.0.1:${REDIS_PORT}" >"${WORK_DIR}/redis.log" 2>&1 &
-PIDS+=($!)
-wait_until 20 "redis" bash -c "exec 3<>/dev/tcp/127.0.0.1/${REDIS_PORT}"
+log "starting redis (${REDIS_IMAGE})"
+docker run -d --rm --name "${REDIS_CONTAINER}" -p "127.0.0.1:${REDIS_PORT}:6379" "${REDIS_IMAGE}" \
+	redis-server --save "" --appendonly no >/dev/null
+wait_until 30 "redis" docker exec "${REDIS_CONTAINER}" redis-cli ping
 
 for node in a b; do
 	port="${NODE_A_PORT}"
