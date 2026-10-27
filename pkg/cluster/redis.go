@@ -110,15 +110,31 @@ func (r *Redis) Broadcast(ctx context.Context, msg any) error {
 }
 
 func (r *Redis) RegisterChannel(ctx context.Context, channelID, subject string) error {
-	ok, err := r.client.SetNX(ctx, r.channelKey(channelID), subject, redisChannelTTL).Result()
+	n, err := r.client.Eval(ctx, registerChannelScript, []string{r.channelKey(channelID)}, subject, redisChannelTTL.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("failed to register channel: %w", err)
 	}
-	if !ok {
+	if n == 0 {
 		return ErrChannelExists
 	}
 	return nil
 }
+
+// registerChannelScript registers the channel for the subject (ARGV[1]) for ARGV[2] milliseconds.
+// The subject that registered it can register it again (e.g. after the client restarted), which
+// refreshes the expiry. A channel registered with an empty subject cannot be registered again.
+const registerChannelScript = `
+local current = redis.call("GET", KEYS[1])
+if not current then
+	redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
+	return 1
+end
+if ARGV[1] ~= "" and current == ARGV[1] then
+	redis.call("PEXPIRE", KEYS[1], ARGV[2])
+	return 1
+end
+return 0
+`
 
 func (r *Redis) LookupChannel(ctx context.Context, channelID string) (string, error) {
 	subject, err := r.client.Get(ctx, r.channelKey(channelID)).Result()

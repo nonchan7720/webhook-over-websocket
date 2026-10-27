@@ -118,8 +118,38 @@ A tunnel to the server has been established.
 | ----------------- | ----------------------- | -------------------------------------------------------------------- |
 | `--server-url`    | *(required)*            | URL of the webhook-over-websocket server                             |
 | `--target-url`    | `http://localhost:3000` | URL of the local application to forward webhook requests to          |
-| `--token`         | *(empty)*               | Session JWT token for authentication (required when server auth is enabled) |
 | `--insecure`      | `false`                 | Skip TLS certificate verification                                    |
+| `--channel-id`    | *(empty)*               | Channel ID to use instead of a random one (1–128 characters of `A-Z a-z 0-9 . _ -`) |
+| `--machine-channel-id` | `false`            | Use a channel ID fixed for this machine, derived from the machine ID (cannot be used with `--channel-id`) |
+| `--channel-key`   | *(derived from the machine ID)* | Secret that lets this client issue the same channel again           |
+
+#### Which channel ID to use
+
+The webhook URL is `<server>/webhook/<channel_id>`, so the channel ID decides whether you have to update the webhook settings of the external service after restarting the client.
+
+| Use case | Command | Webhook URL after a restart |
+| --- | --- | --- |
+| Try it out once | *(no option)* | Changes (a random ID is issued every time) |
+| Develop on your machine and keep the URL registered in the external service | `--machine-channel-id` | Stays the same |
+| Run several local applications on one machine | `--channel-id app-a`, `--channel-id app-b`, ... | Stays the same |
+| Run the client where the machine ID is not available or changes (e.g. containers) | `--channel-id <id> --channel-key <secret>` | Stays the same |
+
+```bash
+# Develop on your machine: register the printed webhook URL once, then restart the client freely.
+webhook-over-websocket client \
+  --server-url http://your-server.example.com \
+  --target-url http://localhost:3000 \
+  --machine-channel-id
+```
+
+**How the channel stays yours without logging in:** The client sends a secret derived from the OS machine ID (the `X-Channel-Key` header), and the server binds the channel to it when authentication is disabled. A client with the same secret, that is, the same machine, can issue the channel again right after a restart; other clients get `409` from `/new` and `403` from `/ws`. With authentication enabled, the channel is bound to the logged-in user instead.
+
+Notes:
+
+- Anyone who knows the webhook URL can send requests to it. `--machine-channel-id` derives an ID that cannot be guessed; do not use guessable values such as MAC addresses or host names with `--channel-id`.
+- `--machine-channel-id` gives the same ID to every client on the machine. Use `--channel-id` to run several clients at once.
+- Use the same `--channel-key` on every run (keep it secret); a different key cannot take over the channel.
+- If the client disappears without closing the connection (e.g. the network is cut), the server may keep the previous connection for up to 60 seconds, and the client cannot connect until then.
 
 ### 3. Configure the external service
 

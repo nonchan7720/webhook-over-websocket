@@ -42,7 +42,8 @@ type RelayResponseFn func(data []byte)
 type Relay interface {
 	Cluster
 	// RegisterChannel shares an issued channel so that its WebSocket can connect to any node.
-	// It returns ErrChannelExists if the channel ID has already been issued.
+	// The same non-empty subject can register it again; otherwise it returns ErrChannelExists
+	// if the channel ID has already been issued.
 	RegisterChannel(ctx context.Context, channelID, subject string) error
 	// LookupChannel returns the subject of an issued channel, or ErrChannelNotFound.
 	LookupChannel(ctx context.Context, channelID string) (string, error)

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,10 +173,20 @@ func (h *base) registerRoutes(mux *http.ServeMux, rt routes) {
 	})
 }
 
-// requestSubject returns the subject of the authenticated user, or "" when auth is disabled.
+// ChannelKeyHeader carries a secret of the client when auth is disabled. The channel is bound to it,
+// so that only the same client can issue the channel again (e.g. after a restart) or connect to it.
+const ChannelKeyHeader = "X-Channel-Key"
+
+// requestSubject returns the subject of the authenticated user. When auth is disabled, it returns
+// the hash of the channel key, or "" for a client without a key.
 func (h *base) requestSubject(r *http.Request) (string, error) {
 	if !h.authEnabled {
-		return "", nil
+		key := r.Header.Get(ChannelKeyHeader)
+		if key == "" {
+			return "", nil
+		}
+		sum := sha256.Sum256([]byte(key))
+		return "key:" + hex.EncodeToString(sum[:]), nil
 	}
 	claims, err := auth.ToContext(r.Context())
 	if err != nil {

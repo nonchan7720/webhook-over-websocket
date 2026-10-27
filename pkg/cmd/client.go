@@ -30,6 +30,10 @@ type clientArgs struct {
 	serverURL string
 	targetURL string
 	channelID string
+	// machineChannelID uses a channel ID derived from the machine ID instead of channelID.
+	machineChannelID bool
+	// channelKey overrides the secret derived from the machine ID.
+	channelKey string
 
 	insecure bool
 
@@ -64,6 +68,9 @@ func clientCommand() *cobra.Command {
 	flag.StringVar(&args.serverURL, "server-url", "", "webhook-over-websocket server URL (e.g. http://example.com)")
 	flag.StringVar(&args.targetURL, "target-url", "http://localhost:3000", "local server URL to forward webhook requests to")
 	flag.StringVar(&args.channelID, "channel-id", "", "channel ID to use")
+	flag.BoolVar(&args.machineChannelID, "machine-channel-id", false, "use a channel ID fixed for this machine (derived from the machine ID)")
+	flag.StringVar(&args.channelKey, "channel-key", "",
+		"secret that lets this client issue the same channel again (derived from the machine ID by default)")
 	flag.BoolVar(&args.insecure, "insecure", false, "insecure skip verify")
 	flag.DurationVar(
 		&args.transferRequestTimeout,
@@ -105,8 +112,13 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 		return fmt.Errorf("failed to authorization step: %w", err)
 	}
 
+	requestedChannelID, channelKey, err := resolveChannelCredentials(args, readMachineID)
+	if err != nil {
+		return err
+	}
+
 	// Have the server generate or use the provided channel_id
-	channelID, err := getNewChannel(args.serverURL, token, args.channelID)
+	channelID, err := getNewChannel(args.serverURL, token, requestedChannelID, channelKey)
 	if err != nil {
 		return fmt.Errorf("failed to retrieve channel_id: %w", err)
 	}
@@ -126,9 +138,12 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 	wsURL := fmt.Sprintf("%s://%s/ws/%s", websocketScheme, u.Host, channelID)
 
 	// Build WebSocket headers (include Authorization if a channel token was issued)
-	var wsHeaders http.Header
+	wsHeaders := http.Header{}
 	if token != "" {
-		wsHeaders = http.Header{"Authorization": []string{"Bearer " + token}}
+		wsHeaders.Set("Authorization", "Bearer "+token)
+	}
+	if channelKey != "" {
+		wsHeaders.Set(channelKeyHeader, channelKey)
 	}
 
 	conn, err := retry.Retry(ctx, func() (*websocket.Conn, error) {
@@ -256,7 +271,7 @@ func executeClient(ctx context.Context, args *clientArgs) error { //nolint: goco
 }
 
 // getNewChannel hits the server's /new endpoint to retrieve the channel_id and optional channel token.
-func getNewChannel(serverURL, token, channelID string) (string, error) {
+func getNewChannel(serverURL, token, channelID, channelKey string) (string, error) {
 	u, err := url.Parse(serverURL)
 	if err != nil {
 		return "", err
@@ -273,6 +288,9 @@ func getNewChannel(serverURL, token, channelID string) (string, error) {
 	}
 	if token != "" {
 		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
+	}
+	if channelKey != "" {
+		req.Header.Set(channelKeyHeader, channelKey)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

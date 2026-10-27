@@ -361,3 +361,27 @@ func TestRedisDeleteOwnerIfOwnedIsCompareAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, deleted)
 }
+
+func TestRedisRegisterChannelAgainWithTheSameSubject(t *testing.T) {
+	mr := miniredis.RunT(t)
+	node1 := newTestRedis(t, mr)
+	node2 := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, node1.RegisterChannel(ctx, testChannelID, "key:a"))
+	mr.FastForward(redisChannelTTL / 2)
+	require.NoError(t, node2.RegisterChannel(ctx, testChannelID, "key:a"), "the same subject can register it again")
+	mr.FastForward(redisChannelTTL / 2)
+	subject, err := node1.LookupChannel(ctx, testChannelID)
+	require.NoError(t, err, "registering again must refresh the expiry")
+	assert.Equal(t, "key:a", subject)
+}
+
+func TestRedisRegisterChannelWithEmptySubjectTwiceReturnsErrChannelExists(t *testing.T) {
+	mr := miniredis.RunT(t)
+	r := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, r.RegisterChannel(ctx, testChannelID, ""))
+	assert.ErrorIs(t, r.RegisterChannel(ctx, testChannelID, ""), ErrChannelExists, "an anonymous channel cannot be claimed by anyone")
+}
