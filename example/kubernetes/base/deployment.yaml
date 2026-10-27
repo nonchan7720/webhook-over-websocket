@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook-over-websocket
+  labels:
+    app.kubernetes.io/name: webhook-over-websocket
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: webhook-over-websocket
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: webhook-over-websocket
+    spec:
+      terminationGracePeriodSeconds: 30
+      # Traefik は native sidecar (initContainers + restartPolicy: Always) として起動する。
+      # server コンテナより先に起動し、server より後に停止するため、
+      # 終了中も他 Pod からのルーティングを受け付けられる。(Kubernetes 1.29+)
+      initContainers:
+        - name: traefik
+          image: traefik:v3.6.8@sha256:90099f8948c828ecf0ababd711a4359a2443eba12261c1df2f548a3b1d815938
+          restartPolicy: Always
+          args:
+            - --configFile=/etc/traefik/static.yaml
+          ports:
+            - name: web
+              containerPort: 8000
+              protocol: TCP
+            - name: traefik
+              containerPort: 9000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: traefik
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: traefik
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: traefik-config
+              mountPath: /etc/traefik/static.yaml
+              subPath: static.yaml
+              readOnly: true
+            - name: traefik-config
+              mountPath: /etc/traefik/dynamic/dynamic.yaml
+              subPath: dynamic.yaml
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: server
+          # 本番では latest ではなくリリースタグ (例: v1.9.0) に固定すること
+          image: ghcr.io/nonchan7720/webhook-over-websocket:latest
+          command:
+            - webhook-over-websocket
+          args:
+            - server
+            - --port=8080
+            # memberlist のピア探索に使う headless Service。
+            # 別 namespace にデプロイする場合は FQDN
+            # (webhook-over-websocket-headless.<namespace>.svc.cluster.local) にする。
+            - --peer-domain=webhook-over-websocket-headless
+            - --memberlist-port=7946
+            - --memberlist-sync-duration=5s
+            - --cleanup-duration=5m
+            - --log-level=INFO
+            - --log-format=json
+          env:
+            # server が自身の URL (http://<POD_IP>:8080) を /traefik-config に載せるために必要
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: memberlist-tcp
+              containerPort: 7946
+              protocol: TCP
+            - name: memberlist-udp
+              containerPort: 7946
+              protocol: UDP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        # base/kustomization.yaml の configMapGenerator で生成される
+        - name: traefik-config
+          configMap:
+            name: webhook-over-websocket-traefik

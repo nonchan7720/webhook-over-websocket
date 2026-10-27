@@ -1,0 +1,41 @@
+# 外部 (Ingress / LoadBalancer) からの入口。
+# Pod 内の Traefik サイドカー (web: 8000) に向ける。server コンテナは直接公開しない。
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-over-websocket
+  labels:
+    app.kubernetes.io/name: webhook-over-websocket
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: webhook-over-websocket
+  ports:
+    - name: http
+      port: 80
+      targetPort: web
+      protocol: TCP
+---
+# memberlist のピア探索用 headless Service。
+# server は --peer-domain にこの名前を指定し、DNS で全 Pod の IP を取得してクラスタに参加する。
+# publishNotReadyAddresses を有効にして、Ready 前の Pod も互いを見つけられるようにする。
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook-over-websocket-headless
+  labels:
+    app.kubernetes.io/name: webhook-over-websocket
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: webhook-over-websocket
+  ports:
+    - name: memberlist-tcp
+      port: 7946
+      targetPort: memberlist-tcp
+      protocol: TCP
+    - name: memberlist-udp
+      port: 7946
+      targetPort: memberlist-udp
+      protocol: UDP
