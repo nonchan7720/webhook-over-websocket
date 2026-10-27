@@ -1,0 +1,29 @@
+# Project quality gate for feedback-gate.
+# Mirrors .github/workflows/test.yaml (jobs "test" -> make test, "lint" -> golangci-lint)
+# Tools come from mise.toml, so every command goes through `mise exec --`.
+
+rules:
+  # Changed Go package: lint + race tests of that package only (scoped version of CI "lint" / "test").
+  - match: ["**/*.go"]
+    per_file_dir: file
+    run:
+      - parallel:
+          - { name: lint-pkg, cmd: "mise exec -- golangci-lint run .", timeout: 180 }
+          - { name: test-pkg, cmd: "mise exec -- go test -race .", timeout: 300 }
+    run_checks: [go-all]
+
+  # Dependency / tool / lint config changes affect the whole module.
+  - match: ["go.mod", "go.sum", "mise.toml", ".golangci.yml", "Makefile"]
+    run:
+      - { name: build, cmd: "mise exec -- go build ./...", files: false, timeout: 180 }
+    run_checks: [go-all]
+
+consistency_checks:
+  - name: go-all
+    timeout: 900
+    run:
+      # same as CI job "test" (make test = go test -race ./...)
+      # and CI job "lint" (golangci-lint-action = golangci-lint run, same as make lint)
+      - parallel:
+          - { name: test-all, cmd: "mise exec -- make test", files: false }
+          - { name: lint-all, cmd: "mise exec -- make lint", files: false }
