@@ -4,5 +4,6 @@ postman-cli = "npm:postman-cli"
 
 [tools]
 go = "1.27.3"
+node = "24.22.1" # required by the npm backend of postman-cli
 golangci-lint = "2.15.0"
 postman-cli = "1.69.0"
