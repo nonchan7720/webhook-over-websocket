@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.9.1...v1.10.0) (2026-10-27)
+
+
+### Features
+
+* let the same machine issue a fixed channel again without login ([#100](https://github.com/nonchan7720/webhook-over-websocket/issues/100)) ([410bfa6](https://github.com/nonchan7720/webhook-over-websocket/commit/410bfa64f98726a40bfaafc36b02ab630918ee31))
+* support Redis Pub/Sub as a cluster backend ([#99](https://github.com/nonchan7720/webhook-over-websocket/issues/99)) ([9d3a553](https://github.com/nonchan7720/webhook-over-websocket/commit/9d3a5534f73ecd60b0c6a743022d70049f66ec04))
+
 ## [1.9.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.9.0...v1.9.1) (2026-10-27)
 
 
