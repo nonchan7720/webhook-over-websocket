@@ -237,7 +237,7 @@ webhook-over-websocket server \
 
 - Use a dedicated Redis, or a Redis ACL user limited to the prefix (`~<prefix>:* &<prefix>:*`) and the commands in use.
 - Use `rediss://` to encrypt the traffic.
-- Give each deployment its own `--redis-key-prefix`. Deployments sharing a Redis with the same prefix interfere with each other.
+- Give each environment sharing a Redis (e.g. production and staging) its own `--redis-key-prefix`; environments with the same prefix interfere with each other. All replicas of one environment, including the old and new versions during a rolling update and replicas in other clusters, must use the same prefix.
 - A relayed webhook is as large as its request body (up to `--webhook-max-body-size`). Keep the Pub/Sub `client-output-buffer-limit` of Redis well above it, or Redis disconnects the subscriber of the replica, which drops the messages to all of its channels until it resubscribes.
 
 **Limitations:** Redis Pub/Sub delivers messages at most once. If the replica holding the WebSocket goes away while a webhook is in flight, the caller receives `504 Gateway Timeout`.
