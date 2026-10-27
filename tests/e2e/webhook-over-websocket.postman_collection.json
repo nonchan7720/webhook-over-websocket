@@ -554,7 +554,7 @@
                   "    pm.response.to.have.status(200);",
                   "    pm.expect(echo.path).to.eql('/concurrent/main');",
                   "});",
-                  "const base = pm.variables.get('baseUrl') + '/webhook/' + pm.collectionVariables.get('channelId');",
+                  "const base = pm.variables.get('baseUrl') + '/webhook/' + pm.variables.get('channelId');",
                   "const N = 20;",
                   "for (let i = 0; i < N; i++) {",
                   "    pm.sendRequest({",
@@ -909,7 +909,7 @@
     },
     {
       "name": "05 traefik config",
-      "description": "Run after 01 and 03 in the same run (uses channelId, serverUrl, issuedChannelId). Opt-in: E2E_TRAEFIK=1.",
+      "description": "Run after 01 and 03 in the same run (uses channelId, serverUrl, issuedChannelId).",
       "item": [
         {
           "name": "traefik config (connected channel)",
@@ -924,7 +924,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "const ch = pm.collectionVariables.get('channelId');",
+                  "const ch = pm.variables.get('channelId');",
                   "const serverUrl = pm.collectionVariables.get('serverUrl');",
                   "const cfg = pm.response.json();",
                   "pm.test('status 200 and JSON', () => {",
@@ -977,7 +977,7 @@
     },
     {
       "name": "06 traefik config after disconnect",
-      "description": "Run with 04. Opt-in: E2E_TRAEFIK=1.",
+      "description": "Run with 04.",
       "item": [
         {
           "name": "traefik config no longer has routers for the channel",
@@ -1027,6 +1027,370 @@
                 "exec": [
                   "pm.test('status 200', () => pm.response.to.have.status(200));",
                   "pm.test('same id', () => pm.expect(pm.response.json().channel_id).to.eql(pm.variables.get('disconnectedChannelId')));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11 pubsub errors and channel lifecycle",
+      "description": "Pub/Sub (redis) mode. baseUrl is node A, otherBaseUrl is node B; the client is connected to node B, so every request here goes through redis.",
+      "item": [
+        {
+          "name": "webhook to unknown channel -> 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/webhook/no-such-channel/x",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Client not connected\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "webhook with empty channel -> 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/webhook/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Client not connected\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "webhook to unreachable target (client on the other node) -> 502",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/webhook/{{deadChannelId}}/x",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 502', () => pm.response.to.have.status(502));",
+                  "pm.test('empty body', () => pm.expect(pm.response.text()).to.eql(''));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/new without channel_id -> uuid",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/new"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200 JSON', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+                  "});",
+                  "pm.test('channel_id is a uuid', () => {",
+                  "    pm.expect(pm.response.json().channel_id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/new with channel_id on node A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/new?channel_id={{issuedChannelId}}"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('issuedChannelId', 'e2e-pubsub-issued-' + Date.now() + '-' + Math.floor(Math.random() * 1e6));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('requested channel_id is used', () => {",
+                  "    pm.expect(pm.response.json()).to.eql({ channel_id: pm.collectionVariables.get('issuedChannelId') });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/new with the same channel_id on node B -> 409",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{otherBaseUrl}}/new?channel_id={{issuedChannelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Channel ID already exists\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/new with connected channel_id -> 409",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/new?channel_id={{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Channel ID already exists\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "webhook to issued-but-not-connected channel -> 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/webhook/{{issuedChannelId}}/x",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Client not connected\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/ws for unknown channel -> 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/ws/no-such-channel"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Forbidden or invalid channel_id\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/ws for channel connected on the other node -> 409",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/ws/{{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Channel is already in use\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/ws without upgrade headers -> 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{otherBaseUrl}}/ws/{{issuedChannelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "issued channel is kept after a rejected /ws request",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/new?channel_id={{issuedChannelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Channel ID already exists\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/traefik-config is not served in pubsub mode",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/traefik-config"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/internal/channels is not served in pubsub mode",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/internal/channels"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "12 pubsub after client disconnect",
+      "item": [
+        {
+          "name": "webhook after disconnect via node A -> 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/webhook/{{disconnectedChannelId}}/x",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Client not connected\\n\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "webhook after disconnect via node B -> 404",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{otherBaseUrl}}/webhook/{{disconnectedChannelId}}/x",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 404', () => pm.response.to.have.status(404));",
+                  "pm.test('body', () => pm.expect(pm.response.text()).to.eql(\"Client not connected\\n\"));"
                 ]
               }
             }

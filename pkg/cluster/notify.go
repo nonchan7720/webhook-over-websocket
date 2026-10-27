@@ -15,15 +15,16 @@ type NotifyMsg struct {
 	Raw     json.RawMessage `json:"-"`
 }
 
-func (m *NotifyMsg) UnmarshalJSON(data []byte) error {
-	type Alias NotifyMsg
-	var alias Alias
-	if err := json.Unmarshal(data, &alias); err != nil {
-		return err
+// parseNotifyMsg decodes the message type and keeps the original bytes for DecodeNotifyMsg.
+// NOTE: NotifyMsg must not implement json.Unmarshaler, because it is embedded in concrete
+// messages (e.g. AuthMessage) and the promoted method would skip decoding their own fields.
+func parseNotifyMsg(b []byte) (*NotifyMsg, error) {
+	var msg NotifyMsg
+	if err := json.Unmarshal(b, &msg); err != nil {
+		return nil, err
 	}
-	*m = (NotifyMsg)(alias)
-	m.Raw = data
-	return nil
+	msg.Raw = b
+	return &msg, nil
 }
 
 func DecodeNotifyMsg[T any](msg *NotifyMsg) (*T, error) {

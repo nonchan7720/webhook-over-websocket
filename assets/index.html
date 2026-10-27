@@ -214,11 +214,12 @@
           </h3>
           <p class="text-left text-slate-600 text-sm">
             <span class="lang-ja hidden">
-              MemberlistのゴシッププロトコルとTraefik HTTP Providerを統合。マルチレプリカでの高可用性構成を標準でサポートしています。
+              MemberlistのゴシッププロトコルとTraefik HTTP Providerを統合。レプリカ同士が直接通信できない環境（マルチクラスターの hot/hot 構成など）向けに Redis Pub/Sub バックエンドも用意しています。
             </span>
             <span class="lang-en">
               Integrates Memberlist gossip protocol and Traefik HTTP Provider, seamlessly supporting High Availability
-              in multi-replica environments.
+              in multi-replica environments. A Redis Pub/Sub backend covers replicas that cannot reach each other
+              (e.g. active-active across clusters).
             </span>
           </p>
         </div>
@@ -366,7 +367,9 @@
                 <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i>
                   ClientとのWebSocket接続 (<code>/ws/{channel_id}</code>) を維持</li>
                 <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> 動的ルーティング用の
-                  Traefik HTTP Provider エンドポイントを提供</li>
+                  Traefik HTTP Provider エンドポイントを提供（memberlist モード）</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i>
+                  レプリカ間の通信をすべて Redis Pub/Sub で中継（redis モード）</li>
               </ul>
             </div>
             <div class="lang-en">
@@ -377,7 +380,9 @@
                 <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> Maintains
                   WebSocket connection with clients (<code>/ws/{channel_id}</code>)</li>
                 <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> Exposes
-                  Traefik HTTP Provider endpoints for dynamic routing</li>
+                  Traefik HTTP Provider endpoints for dynamic routing (memberlist mode)</li>
+                <li class="flex items-start"><i class="fas fa-check-circle text-sky-500 mt-0.5 mr-2"></i> Relays
+                  all traffic between replicas through Redis Pub/Sub (redis mode)</li>
               </ul>
             </div>
           </div>
@@ -677,6 +682,24 @@
                     <span class="lang-ja hidden">非アクティブなチャンネルセッションのクリーンアップ間隔 (default: 5m)</span><span
                       class="lang-en">Interval for cleaning up inactive channel sessions (default: 5m)</span>
                   </li>
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--webhook-max-body-size</code>
+                    <br>
+                    <span class="lang-ja hidden">Webhook リクエストボディの最大サイズ（バイト）。超えると 413 (default: 10485760)</span><span
+                      class="lang-en">Maximum webhook request body size in bytes; larger requests receive 413 (default: 10485760)</span>
+                  </li>
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--cluster-backend</code>
+                    <br>
+                    <span class="lang-ja hidden">レプリカ間で状態を共有する方式。<code>memberlist</code> または <code>redis</code> (default: memberlist)</span><span
+                      class="lang-en">How replicas share state: <code>memberlist</code> or <code>redis</code> (default: memberlist)</span>
+                  </li>
+                  <li>
+                    <code class="font-bold text-slate-800 bg-slate-100 px-1 py-0.5 rounded">--redis-url</code>
+                    <br>
+                    <span class="lang-ja hidden">Redis の接続 URL。TLS は <code>rediss://</code>（redis モードで必須）</span><span
+                      class="lang-en">Redis connection URL, <code>rediss://</code> for TLS (required in redis mode)</span>
+                  </li>
                 </ul>
               </div>
               <div>
@@ -724,6 +747,34 @@
               &nbsp;&nbsp;--peer-domain webhook-service.default.svc.cluster.local \<br>
               &nbsp;&nbsp;--memberlist-port 7946 \<br>
               &nbsp;&nbsp;--memberlist-sync-duration 5s
+            </div>
+
+            <h3 class="text-lg font-bold text-slate-900 mt-10 mb-4">
+              <span class="lang-ja hidden">Redis Pub/Sub</span>
+              <span class="lang-en">Redis Pub/Sub</span>
+            </h3>
+
+            <p class="text-slate-600 text-sm leading-relaxed mb-6">
+              <span class="lang-ja hidden">マルチクラスターの hot/hot 構成など、レプリカ同士が直接通信できない環境では Redis バックエンドを使います。Webhook の転送を含むレプリカ間の通信はすべて
+                Redis Pub/Sub を経由するため、Traefik も memberlist も不要で、通常のロードバランサーからどのレプリカにリクエストを振っても動作します。メッセージはバイナリ形式で、大きなペイロードは
+                zstd で圧縮されます。<br>Redis は信頼境界になるため、専用の Redis（またはプレフィックスに限定した ACL）と <code>rediss://</code> を使い、同じ Redis を共有する環境ごとに
+                <code>--redis-key-prefix</code> を分けてください。</span>
+              <span class="lang-en">When replicas cannot reach each other directly, for example in an active-active setup
+                across clusters, use the Redis backend. All traffic between replicas, including webhook forwarding, goes
+                through Redis Pub/Sub, so neither Traefik nor memberlist is needed and a plain load balancer can send any
+                request to any replica. Messages use a compact binary format and large payloads are compressed with
+                zstd.<br>Redis becomes a trust boundary: use a dedicated Redis (or an ACL limited to the key prefix) with
+                <code>rediss://</code>, and give each environment sharing a Redis its own
+                <code>--redis-key-prefix</code>.</span>
+            </p>
+
+            <div
+              class="bg-slate-50 border-l-4 border-sky-500 p-4 rounded-r-lg font-mono text-xs text-slate-700 overflow-x-auto">
+              # Server setup example<br>
+              export WOW_REDIS_URL=rediss://user:password@redis.example.com:6379/0<br>
+              webhook-over-websocket server \<br>
+              &nbsp;&nbsp;--port 8080 \<br>
+              &nbsp;&nbsp;--cluster-backend redis
             </div>
           </div>
         </div>

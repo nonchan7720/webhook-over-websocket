@@ -9,13 +9,17 @@
 #        - main client     -> target          (channel id issued by the server)
 #        - dead client     -> closed port     (fixed channel id, for the 502 case)
 #   3. wait until both channels are connected (/internal/channels)
-#   4. postman collection run: folders 01..03 (+05 with E2E_TRAEFIK=1)
+#   4. postman collection run: folders 01..03, 05
 #   5. stop the main client, wait until the server drops the channel
-#   6. postman collection run: folders 04, 07 (+06 with E2E_TRAEFIK=1)
+#   6. postman collection run: folders 04, 06, 07
 #
-# E2E_TRAEFIK=1 also runs the /traefik-config folders (05, 06). They are
-# opt-in because /traefik-config panics on main (serverHandle.mlist is never
-# set, nil pointer dereference) and the connection is dropped.
+# Pub/Sub (redis) mode:
+#   7. start a real Redis in Docker and two servers (node A, node B) with
+#      --cluster-backend redis, and the clients connected to node B
+#   8. postman collection run against node A: folders 02, 11
+#      (every webhook is relayed from node A to node B through redis)
+#   9. stop the main client, postman collection run: folders 12, 07
+#
 # All processes are killed on exit; their logs are printed on failure.
 set -euo pipefail
 
@@ -24,6 +28,9 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COLLECTION="${SCRIPT_DIR}/webhook-over-websocket.postman_collection.json"
 GO="${GO:-go}"
 POSTMAN="${POSTMAN:-postman}"
+# Real Redis for the Pub/Sub phase; override with E2E_REDIS_IMAGE.
+REDIS_IMAGE="${E2E_REDIS_IMAGE:-redis:8.2.11-alpine}"
+REDIS_CONTAINER="wow-e2e-redis-$$"
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wow-e2e.XXXXXX")"
 PIDS=()
@@ -38,6 +45,10 @@ cleanup() {
 	for pid in "${PIDS[@]:-}"; do
 		[ -n "${pid}" ] && wait "${pid}" 2>/dev/null || true
 	done
+	if docker container inspect "${REDIS_CONTAINER}" >/dev/null 2>&1; then
+		docker logs "${REDIS_CONTAINER}" >"${WORK_DIR}/redis.log" 2>&1 || true
+		docker rm -f "${REDIS_CONTAINER}" >/dev/null 2>&1 || true
+	fi
 	if [ "${STATUS}" -ne 0 ]; then
 		for f in "${WORK_DIR}"/*.log; do
 			[ -f "${f}" ] || continue
@@ -71,6 +82,10 @@ webhook_channels() {
 	curl -fsS "${BASE_URL}/internal/channels" | grep -o '"webhook_channels":\[[^]]*\]' || true
 }
 channel_connected() { webhook_channels | grep -q "\"$1\""; }
+# webhook_status <base-url> <channel> prints the status of a webhook to the channel.
+webhook_status() { curl -sS -o /dev/null -w '%{http_code}' -X POST "$1/webhook/$2/__e2e_probe" 2>/dev/null || true; }
+relay_connected() { [ "$(webhook_status "$1" "$2")" != "404" ]; }
+relay_gone() { [ "$(webhook_status "$1" "$2")" = "404" ]; }
 channel_gone() { ! curl -fsS "${BASE_URL}/internal/channels" | grep -q "\"$1\""; }
 proc_alive() { kill -0 "$1" 2>/dev/null; }
 
@@ -84,14 +99,17 @@ while IFS= read -r v; do unset "${v}"; done < <(env | sed -n 's/^\(WOW_[A-Za-z0-
 unset POD_IP || true
 
 PORTS=()
-while IFS= read -r p; do PORTS+=("${p}"); done < <("${WORK_DIR}/target" -free-ports 4)
+while IFS= read -r p; do PORTS+=("${p}"); done < <("${WORK_DIR}/target" -free-ports 7)
 TARGET_PORT="${PORTS[0]}"
 SERVER_PORT="${PORTS[1]}"
 MEMBERLIST_PORT="${PORTS[2]}"
 DEAD_PORT="${PORTS[3]}"
+REDIS_PORT="${PORTS[4]}"
+NODE_A_PORT="${PORTS[5]}"
+NODE_B_PORT="${PORTS[6]}"
 BASE_URL="http://127.0.0.1:${SERVER_PORT}"
 DEAD_CHANNEL="e2e-dead-target-$$"
-log "ports: target=${TARGET_PORT} server=${SERVER_PORT} memberlist=${MEMBERLIST_PORT} dead=${DEAD_PORT}"
+log "ports: target=${TARGET_PORT} server=${SERVER_PORT} memberlist=${MEMBERLIST_PORT} dead=${DEAD_PORT} redis=${REDIS_PORT} node-a=${NODE_A_PORT} node-b=${NODE_B_PORT}"
 
 # ---------------------------------------------------------------- start processes
 "${WORK_DIR}/target" -port "${TARGET_PORT}" >"${WORK_DIR}/target.log" 2>&1 &
@@ -137,18 +155,10 @@ POSTMAN_ARGS=(
 	--disable-unicode
 )
 
-PHASE1_FOLDERS=(-i "01 health and discovery" -i "02 webhook forwarding" -i "03 errors and channel lifecycle")
 # Postman runs the folders in the order of the -i flags.
-PHASE2_FOLDERS=(-i "04 after client disconnect")
-if [ "${E2E_TRAEFIK:-0}" = "1" ]; then
-	PHASE1_FOLDERS+=(-i "05 traefik config")
-	PHASE2_FOLDERS+=(-i "06 traefik config after disconnect")
-else
-	code="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE_URL}/traefik-config" 2>/dev/null || true)"
-	log "skipping /traefik-config folders (set E2E_TRAEFIK=1 to run them); probe GET /traefik-config -> HTTP '${code}'"
-fi
-# Must be last: it registers the disconnected channel id again.
-PHASE2_FOLDERS+=(-i "07 reissue after disconnect")
+PHASE1_FOLDERS=(-i "01 health and discovery" -i "02 webhook forwarding" -i "03 errors and channel lifecycle" -i "05 traefik config")
+# 07 must be last: it registers the disconnected channel id again.
+PHASE2_FOLDERS=(-i "04 after client disconnect" -i "06 traefik config after disconnect" -i "07 reissue after disconnect")
 
 # ---------------------------------------------------------------- phase 1
 log "postman: ${PHASE1_FOLDERS[*]}"
@@ -168,5 +178,73 @@ log "postman: ${PHASE2_FOLDERS[*]}"
 	"${PHASE2_FOLDERS[@]}" \
 	--env-var "disconnectedChannelId=${CHANNEL_ID}" \
 	"${POSTMAN_ARGS[@]}"
+
+# ================================================================ Pub/Sub (redis) mode
+REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
+NODE_A_URL="http://127.0.0.1:${NODE_A_PORT}"
+NODE_B_URL="http://127.0.0.1:${NODE_B_PORT}"
+PUBSUB_DEAD_CHANNEL="e2e-pubsub-dead-target-$$"
+
+log "starting redis (${REDIS_IMAGE})"
+docker run -d --rm --name "${REDIS_CONTAINER}" -p "127.0.0.1:${REDIS_PORT}:6379" "${REDIS_IMAGE}" \
+	redis-server --save "" --appendonly no >/dev/null
+wait_until 30 "redis" docker exec "${REDIS_CONTAINER}" redis-cli ping
+
+for node in a b; do
+	port="${NODE_A_PORT}"
+	[ "${node}" = "b" ] && port="${NODE_B_PORT}"
+	"${WOW}" server --port "${port}" --cluster-backend redis --redis-url "${REDIS_URL}" \
+		--redis-heartbeat-duration 1s --log-level DEBUG \
+		>"${WORK_DIR}/server-node-${node}.log" 2>&1 &
+	PIDS+=($!)
+done
+wait_until 20 "node A /healthz" curl -fsS "${NODE_A_URL}/healthz"
+wait_until 20 "node B /healthz" curl -fsS "${NODE_B_URL}/healthz"
+
+# The clients connect to node B, while the webhooks are sent to node A.
+"${WOW}" client --server-url "${NODE_B_URL}" --target-url "http://127.0.0.1:${TARGET_PORT}" \
+	>"${WORK_DIR}/client-pubsub.log" 2>&1 &
+PUBSUB_CLIENT_PID=$!
+PIDS+=("${PUBSUB_CLIENT_PID}")
+
+"${WOW}" client --server-url "${NODE_B_URL}" --target-url "http://127.0.0.1:${DEAD_PORT}" \
+	--channel-id "${PUBSUB_DEAD_CHANNEL}" --transfer-request-timeout 2s \
+	>"${WORK_DIR}/client-pubsub-dead-target.log" 2>&1 &
+PIDS+=($!)
+
+pubsub_client_issued() { grep -q '^Issued Channel ID: ' "${WORK_DIR}/client-pubsub.log"; }
+wait_until 20 "pub/sub client to print its channel id" pubsub_client_issued
+PUBSUB_CHANNEL_ID="$(sed -n 's/^Issued Channel ID: //p' "${WORK_DIR}/client-pubsub.log" | head -n1)"
+log "pub/sub client channel: ${PUBSUB_CHANNEL_ID}"
+
+wait_until 30 "pub/sub client to be reachable from node A" relay_connected "${NODE_A_URL}" "${PUBSUB_CHANNEL_ID}"
+wait_until 30 "pub/sub dead-target client to be reachable from node A" relay_connected "${NODE_A_URL}" "${PUBSUB_DEAD_CHANNEL}"
+
+PUBSUB_ARGS=(
+	--env-var "baseUrl=${NODE_A_URL}"
+	--env-var "otherBaseUrl=${NODE_B_URL}"
+	--env-var "serverPort=${NODE_A_PORT}"
+	--env-var "targetHost=127.0.0.1:${TARGET_PORT}"
+	--env-var "deadChannelId=${PUBSUB_DEAD_CHANNEL}"
+	--timeout-request 60000
+	--disable-unicode
+)
+
+log "postman (pub/sub): 02, 11"
+"${POSTMAN}" collection run "${COLLECTION}" \
+	-i "02 webhook forwarding" -i "11 pubsub errors and channel lifecycle" \
+	--env-var "channelId=${PUBSUB_CHANNEL_ID}" \
+	"${PUBSUB_ARGS[@]}"
+
+log "stopping pub/sub client (SIGTERM)"
+kill -TERM "${PUBSUB_CLIENT_PID}"
+wait_until 15 "pub/sub client to exit" bash -c "! kill -0 ${PUBSUB_CLIENT_PID} 2>/dev/null"
+wait_until 15 "node A to see channel ${PUBSUB_CHANNEL_ID} gone" relay_gone "${NODE_A_URL}" "${PUBSUB_CHANNEL_ID}"
+
+log "postman (pub/sub): 12, 07"
+"${POSTMAN}" collection run "${COLLECTION}" \
+	-i "12 pubsub after client disconnect" -i "07 reissue after disconnect" \
+	--env-var "disconnectedChannelId=${PUBSUB_CHANNEL_ID}" \
+	"${PUBSUB_ARGS[@]}"
 
 STATUS=0
