@@ -34,7 +34,12 @@ const (
 
 // wsWriteTimeout bounds a write to a client, so that a client not reading its socket
 // cannot block the caller (e.g. the loop receiving relayed requests) indefinitely.
+// NOTE: The deadline set on a gorilla connection stays in effect for every later write,
+// so each write must set its own deadline; a write reusing a stale deadline fails at once.
 var wsWriteTimeout = 10 * time.Second
+
+// wsPingInterval is how often the server pings a client to keep the connection alive.
+var wsPingInterval = 15 * time.Second
 
 // validChannelID reports whether id can be used as a channel ID:
 // 1 to maxChannelIDLength characters of [A-Za-z0-9._-].
@@ -265,13 +270,13 @@ func (h *base) serveWebSocket(channelID string, clientConn *ClientConn, conn *we
 
 	// Goroutine that periodically sends pings
 	go func() {
-		ticker := time.NewTicker(15 * time.Second)
+		ticker := time.NewTicker(wsPingInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				clientConn.mu.Lock()
-				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteTimeout)); err != nil {
 					clientConn.mu.Unlock()
 					return
 				}
@@ -312,9 +317,10 @@ func (h *base) serveWebSocket(channelID string, clientConn *ClientConn, conn *we
 		// Server Shutdown
 		slog.Info(fmt.Sprintf("Closing WebSocket connection due to server shutdown: %s", channelID)) //nolint:gosec
 		clientConn.mu.Lock()
-		_ = conn.WriteMessage( //nolint: errcheck
+		_ = conn.WriteControl( //nolint: errcheck
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseGoingAway, "Server is shutting down"),
+			time.Now().Add(wsWriteTimeout),
 		)
 		clientConn.mu.Unlock()
 		_ = conn.Close() //nolint: errcheck

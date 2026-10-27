@@ -169,3 +169,56 @@ func TestClientConnSendTimesOutWhenPeerDoesNotRead(t *testing.T) {
 		t.Fatal("send blocked on a peer that does not read")
 	}
 }
+
+// The deadline set by send() must not break the pings sent later on the same connection:
+// a stale deadline makes the ping fail at once and the connection is dropped.
+func TestServeWebSocketKeepsPingingAfterSend(t *testing.T) {
+	origWrite, origPing := wsWriteTimeout, wsPingInterval
+	wsWriteTimeout, wsPingInterval = 100*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { wsWriteTimeout, wsPingInterval = origWrite, origPing })
+
+	h := newBase(Options{ServerCtx: context.Background()}, nil)
+	clients := make(chan *ClientConn, 1)
+	served := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cc := &ClientConn{}
+		conn := h.upgradeWebSocket(w, r, cc)
+		if conn == nil {
+			return
+		}
+		clients <- cc
+		h.serveWebSocket("ch", cc, conn, func(TunnelMessage) {})
+		close(served)
+	}))
+	t.Cleanup(srv.Close)
+	peer, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()                  //nolint: errcheck
+	t.Cleanup(func() { _ = peer.Close() }) //nolint: errcheck
+	pings := make(chan struct{}, 64)
+	peer.SetPingHandler(func(string) error { pings <- struct{}{}; return nil })
+	go func() {
+		for {
+			if _, _, err := peer.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	cc := <-clients
+	require.NoError(t, cc.send(TunnelMessage{ReqID: "r", Payload: []byte("hello")}))
+	// Wait well past the write deadline of send() and several ping intervals.
+	deadline := time.After(1 * time.Second)
+	received := 0
+	for received < 3 {
+		select {
+		case <-pings:
+			received++
+		case <-served:
+			t.Fatal("the server dropped the connection after a send")
+		case <-deadline:
+			t.Fatalf("expected at least 3 pings after a send, got %d", received)
+		}
+	}
+	require.NoError(t, cc.send(TunnelMessage{ReqID: "r2", Payload: []byte("hello again")}), "send after pings")
+}
