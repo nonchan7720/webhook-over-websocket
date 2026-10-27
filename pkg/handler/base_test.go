@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
 	"github.com/stretchr/testify/assert"
@@ -97,12 +96,7 @@ func TestValidChannelID(t *testing.T) {
 }
 
 func TestNewChannelRejectsInvalidChannelID(t *testing.T) {
-	mr := miniredis.RunT(t)
-	servers := map[string]*httptest.Server{
-		"memberlist": httptest.NewServer(newTestServerHandle(nil).BuildMux()),
-		"pubsub":     newPubSubNode(t, mr),
-	}
-	for name, srv := range servers {
+	for name, srv := range newServersOfEachMode(t) {
 		t.Run(name, func(t *testing.T) {
 			defer srv.Close()
 			resp, err := http.Get(srv.URL + "/new?channel_id=" + url.QueryEscape(strings.Repeat("a", maxChannelIDLength+1)))

@@ -56,21 +56,26 @@ func (h *MemberlistHandler) handleNewChannel(w http.ResponseWriter, r *http.Requ
 	// Lock to prevent race condition
 	h.activeChannelsMu.Lock()
 	defer h.activeChannelsMu.Unlock()
-	channelID := uuid.New().String()
-	if v := r.URL.Query().Get("channel_id"); v != "" {
-		if !validChannelID(v) {
-			http.Error(w, "Invalid channel_id", http.StatusBadRequest)
-			return
-		}
-		if _, ok := h.activeChannels[v]; ok {
-			http.Error(w, "Channel ID already exists", http.StatusConflict)
-			return
-		}
-		channelID = v
-	}
 	subject, err := h.requestSubject(r)
 	if err != nil {
 		http.Error(w, "Unauthorized: missing authorization token", http.StatusUnauthorized)
+		return
+	}
+	channelID := r.URL.Query().Get("channel_id")
+	if channelID == "" {
+		channelID = uuid.New().String()
+	} else if !validChannelID(channelID) {
+		http.Error(w, "Invalid channel_id", http.StatusBadRequest)
+		return
+	}
+	if existing, ok := h.activeChannels[channelID]; ok {
+		// The client that issued it can issue it again (e.g. after a restart); keep the entry
+		// as is, since it may still hold the previous connection.
+		if subject == "" || existing.subject != subject {
+			http.Error(w, "Channel ID already exists", http.StatusConflict)
+			return
+		}
+		writeChannelID(w, channelID)
 		return
 	}
 	h.activeChannels[channelID] = &ClientConn{wsConn: nil, subject: subject}

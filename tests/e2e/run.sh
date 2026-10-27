@@ -31,6 +31,8 @@ POSTMAN="${POSTMAN:-postman}"
 # Real Redis for the Pub/Sub phase; override with E2E_REDIS_IMAGE.
 REDIS_IMAGE="${E2E_REDIS_IMAGE:-redis:8.2.11-alpine}"
 REDIS_CONTAINER="wow-e2e-redis-$$"
+# The main clients send this key, so that the collection can act as the same client.
+E2E_CHANNEL_KEY="e2e-channel-key-$$"
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/wow-e2e.XXXXXX")"
 PIDS=()
@@ -124,6 +126,7 @@ wait_until 20 "target" curl -fsS "http://127.0.0.1:${TARGET_PORT}/ready"
 wait_until 20 "server /healthz" curl -fsS "${BASE_URL}/healthz"
 
 "${WOW}" client --server-url "${BASE_URL}" --target-url "http://127.0.0.1:${TARGET_PORT}" \
+	--channel-key "${E2E_CHANNEL_KEY}" \
 	>"${WORK_DIR}/client.log" 2>&1 &
 CLIENT_PID=$!
 PIDS+=("${CLIENT_PID}")
@@ -151,6 +154,7 @@ POSTMAN_ARGS=(
 	--env-var "serverPort=${SERVER_PORT}"
 	--env-var "targetHost=127.0.0.1:${TARGET_PORT}"
 	--env-var "deadChannelId=${DEAD_CHANNEL}"
+	--env-var "channelKey=${E2E_CHANNEL_KEY}"
 	--timeout-request 60000
 	--disable-unicode
 )
@@ -203,6 +207,7 @@ wait_until 20 "node B /healthz" curl -fsS "${NODE_B_URL}/healthz"
 
 # The clients connect to node B, while the webhooks are sent to node A.
 "${WOW}" client --server-url "${NODE_B_URL}" --target-url "http://127.0.0.1:${TARGET_PORT}" \
+	--channel-key "${E2E_CHANNEL_KEY}" \
 	>"${WORK_DIR}/client-pubsub.log" 2>&1 &
 PUBSUB_CLIENT_PID=$!
 PIDS+=("${PUBSUB_CLIENT_PID}")
@@ -226,6 +231,7 @@ PUBSUB_ARGS=(
 	--env-var "serverPort=${NODE_A_PORT}"
 	--env-var "targetHost=127.0.0.1:${TARGET_PORT}"
 	--env-var "deadChannelId=${PUBSUB_DEAD_CHANNEL}"
+	--env-var "channelKey=${E2E_CHANNEL_KEY}"
 	--timeout-request 60000
 	--disable-unicode
 )

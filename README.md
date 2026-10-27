@@ -120,6 +120,11 @@ A tunnel to the server has been established.
 | `--target-url`    | `http://localhost:3000` | URL of the local application to forward webhook requests to          |
 | `--token`         | *(empty)*               | Session JWT token for authentication (required when server auth is enabled) |
 | `--insecure`      | `false`                 | Skip TLS certificate verification                                    |
+| `--channel-id`    | *(empty)*               | Channel ID to use instead of a random one (1–128 characters of `A-Z a-z 0-9 . _ -`) |
+| `--machine-channel-id` | `false`            | Use a channel ID fixed for this machine, derived from the machine ID (cannot be used with `--channel-id`) |
+| `--channel-key`   | *(derived from the machine ID)* | Secret that lets this client issue the same channel again           |
+
+**Keeping the same webhook URL:** With `--channel-id` or `--machine-channel-id`, the webhook URL stays the same across restarts. The client sends a secret derived from the OS machine ID (`X-Channel-Key`), and the server binds the channel to it when authentication is disabled. Only a client with the same secret can issue the channel again or connect to it, so the client can restart without waiting for the previous registration to expire, even without logging in. `--machine-channel-id` derives an ID that cannot be guessed from the machine ID; prefer it over IDs such as MAC addresses, since anyone who knows the webhook URL can send requests to it. When the machine ID cannot be read (e.g. some containers), pass `--channel-key`.
 
 ### 3. Configure the external service
 

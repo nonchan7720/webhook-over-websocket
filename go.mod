@@ -6,6 +6,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/cli/browser v1.3.0
 	github.com/cli/safeexec v1.0.1
+	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/goccy/go-yaml v1.19.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510

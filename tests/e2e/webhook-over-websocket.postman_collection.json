@@ -749,6 +749,55 @@
           ]
         },
         {
+          "name": "/new with connected channel_id and its key -> 200 (issued again)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Channel-Key",
+                "value": "{{channelKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/new?channel_id={{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('same channel_id', () => pm.expect(pm.response.json().channel_id).to.eql(pm.variables.get('channelId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/new with connected channel_id and another key -> 409",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Channel-Key",
+                "value": "another-key"
+              }
+            ],
+            "url": "{{baseUrl}}/new?channel_id={{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "webhook to issued-but-not-connected channel -> 404",
           "request": {
             "method": "POST",
@@ -815,10 +864,34 @@
           ]
         },
         {
-          "name": "/ws for connected channel -> 409",
+          "name": "/ws for connected channel without its key -> 403",
           "request": {
             "method": "GET",
             "header": [],
+            "url": "{{baseUrl}}/ws/{{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/ws for connected channel -> 409",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Channel-Key",
+                "value": "{{channelKey}}"
+              }
+            ],
             "url": "{{baseUrl}}/ws/{{channelId}}"
           },
           "event": [
@@ -1203,6 +1276,55 @@
           ]
         },
         {
+          "name": "/new with connected channel_id and its key -> 200 (issued again)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Channel-Key",
+                "value": "{{channelKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/new?channel_id={{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('same channel_id', () => pm.expect(pm.response.json().channel_id).to.eql(pm.variables.get('channelId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/new with connected channel_id and another key -> 409",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Channel-Key",
+                "value": "another-key"
+              }
+            ],
+            "url": "{{baseUrl}}/new?channel_id={{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "webhook to issued-but-not-connected channel -> 404",
           "request": {
             "method": "POST",
@@ -1247,10 +1369,34 @@
           ]
         },
         {
-          "name": "/ws for channel connected on the other node -> 409",
+          "name": "/ws for connected channel without its key -> 403",
           "request": {
             "method": "GET",
             "header": [],
+            "url": "{{baseUrl}}/ws/{{channelId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "/ws for channel connected on the other node -> 409",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Channel-Key",
+                "value": "{{channelKey}}"
+              }
+            ],
             "url": "{{baseUrl}}/ws/{{channelId}}"
           },
           "event": [

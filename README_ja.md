@@ -120,6 +120,11 @@ A tunnel to the server has been established.
 | `--target-url`   | `http://localhost:3000` | Webhook リクエストを転送するローカルアプリケーションの URL                   |
 | `--token`        | *(空)*                  | 認証用セッション JWT トークン（サーバーで認証が有効な場合に必須）            |
 | `--insecure`     | `false`                 | TLS 証明書の検証をスキップします                                             |
+| `--channel-id`   | *(空)*                  | ランダムな ID の代わりに使うチャンネル ID（`A-Z a-z 0-9 . _ -` の 1〜128 文字） |
+| `--machine-channel-id` | `false`           | マシン ID から導出した、このマシンで固定のチャンネル ID を使います（`--channel-id` とは併用不可） |
+| `--channel-key`  | *(マシン ID から導出)*  | 同じチャンネルを再発行できるようにするための秘密値                           |
+
+**Webhook URL を固定する:** `--channel-id` または `--machine-channel-id` を使うと、再起動しても Webhook URL が変わりません。クライアントは OS のマシン ID から導出した秘密値（`X-Channel-Key`）を送り、認証が無効なサーバーはチャンネルをその値に紐づけます。同じ秘密値を持つクライアントだけがチャンネルを再発行・接続できるため、ログインしなくても、以前の登録が期限切れになるのを待たずに再起動できます。`--machine-channel-id` はマシン ID から推測できない ID を導出します。Webhook URL を知っていれば誰でもリクエストを送れるため、MAC アドレスのような推測しやすい値よりこちらを使ってください。マシン ID を読めない環境（一部のコンテナなど）では `--channel-key` を指定してください。
 
 ### 3. 外部サービスを設定する
 
