@@ -91,6 +91,8 @@ func newServer(serverCtx context.Context, cfg *args.Server, myIP string) (cluste
 		Port:      cfg.Port,
 		ServerCtx: serverCtx,
 
+		WebhookMaxBodySize: cfg.WebhookMaxBodySize,
+
 		AuthEnabled:        cfg.AuthEnabled(),
 		JwtSecret:          []byte(cfg.JwtSigningKey),
 		GithubClientID:     cfg.GithubClientID,

@@ -30,7 +30,7 @@ flowchart TD
 
 | Endpoint                           | Description                                                                           |
 | ---------------------------------- | ------------------------------------------------------------------------------------- |
-| `GET /new`                         | Issues a new `channel_id` (UUID) for a client to use                                  |
+| `GET /new`                         | Issues a new `channel_id` (UUID) for a client to use. `?channel_id=` requests a specific ID (1–128 characters of `A-Z a-z 0-9 . _ -`) |
 | `GET /traefik-config`              | Returns dynamic Traefik routing configuration (HTTP Provider). *Memberlist backend only* |
 | `GET /internal/channels`           | Returns active channel list (used for peer-to-peer sync in multi-replica deployments). *Memberlist backend only* |
 | `GET /ws/{channel_id}`             | WebSocket upgrade endpoint for client connections                                     |
@@ -78,6 +78,7 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 | ---------------------------- | --------- | ---------------------------------------------------------------------- |
 | `--port`, `-p`               | `8080`    | Port to listen on                                                      |
 | `--cleanup-duration`         | `5m`      | Interval for cleaning up inactive channel sessions                     |
+| `--webhook-max-body-size`    | `10485760` | Maximum size of a webhook request body in bytes (larger requests receive `413`) |
 | `--cluster-backend`          | `memberlist` | How replicas share state: `memberlist` or `redis` (see [Clustering and High Availability](#clustering-and-high-availability)) |
 | `--peer-domain`              | *(empty)* | *(memberlist)* Peer domain name for memberlist cluster discovery       |
 | `--memberlist-port`          | `7946`    | *(memberlist)* Port for memberlist gossip protocol                     |
@@ -221,15 +222,23 @@ Messages between replicas use a compact binary format, and payloads larger than 
 **Configuration example:**
 
 ```bash
+# Pass the URL through the environment so that the password does not appear in the process list.
+export WOW_REDIS_URL=rediss://user:password@redis.example.com:6379/0
 webhook-over-websocket server \
   --port 8080 \
-  --cluster-backend redis \
-  --redis-url rediss://user:password@redis.example.com:6379/0
+  --cluster-backend redis
 ```
 
 - Use `rediss://` (or `--redis-tls-ca-file`) for TLS. Managed Redis services with in-transit encryption work with `rediss://` as is.
 - Use `--redis-cluster-mode` when Redis runs in cluster mode.
 - `/traefik-config` and `/internal/channels` are not served with the Redis backend.
+
+**Security:** Redis is a trust boundary. Messages between replicas are neither signed nor encrypted by the application, so anyone who can subscribe or publish to these channels can read the relayed webhooks and the session tokens of `/auth/callback`, and can inject requests to the connected clients.
+
+- Use a dedicated Redis, or a Redis ACL user limited to the prefix (`~<prefix>:* &<prefix>:*`) and the commands in use.
+- Use `rediss://` to encrypt the traffic.
+- Give each deployment its own `--redis-key-prefix`. Deployments sharing a Redis with the same prefix interfere with each other.
+- A relayed webhook is as large as its request body (up to `--webhook-max-body-size`). Keep the Pub/Sub `client-output-buffer-limit` of Redis well above it, or Redis disconnects the subscriber of the replica, which drops the messages to all of its channels until it resubscribes.
 
 **Limitations:** Redis Pub/Sub delivers messages at most once. If the replica holding the WebSocket goes away while a webhook is in flight, the caller receives `504 Gateway Timeout`.
 

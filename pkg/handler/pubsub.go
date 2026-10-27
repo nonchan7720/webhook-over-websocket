@@ -59,6 +59,10 @@ func (h *PubSubHandler) handleNewChannel(w http.ResponseWriter, r *http.Request)
 	}
 	channelID := uuid.New().String()
 	if v := r.URL.Query().Get("channel_id"); v != "" {
+		if !validChannelID(v) {
+			http.Error(w, "Invalid channel_id", http.StatusBadRequest)
+			return
+		}
 		channelID = v
 	}
 	// RegisterChannel checks and registers atomically, so concurrent requests cannot both get the same ID.

@@ -30,7 +30,7 @@ flowchart TD
 
 | エンドポイント                     | 説明                                                                                              |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `GET /new`                         | クライアントが使用する新しい `channel_id`（UUID）を発行します                                      |
+| `GET /new`                         | クライアントが使用する新しい `channel_id`（UUID）を発行します。`?channel_id=` で ID を指定できます（`A-Z a-z 0-9 . _ -` の 1〜128 文字） |
 | `GET /traefik-config`              | Traefik の動的ルーティング設定（HTTP Provider）を返します。*memberlist バックエンドのみ*           |
 | `GET /internal/channels`           | アクティブなチャンネル一覧を返します（マルチレプリカ構成でのピア間同期に使用）。*memberlist バックエンドのみ* |
 | `GET /ws/{channel_id}`             | クライアント接続用の WebSocket アップグレードエンドポイント                                        |
@@ -78,6 +78,7 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 | ------------------------------ | ---------- | --------------------------------------------------------------------------------------- |
 | `--port`, `-p`                 | `8080`     | リッスンするポート番号                                                                   |
 | `--cleanup-duration`           | `5m`       | 非アクティブなチャンネルセッションのクリーンアップ間隔                                   |
+| `--webhook-max-body-size`      | `10485760` | Webhook リクエストボディの最大サイズ（バイト）。超えたリクエストには `413` を返します     |
 | `--cluster-backend`            | `memberlist` | レプリカ間で状態を共有する方式。`memberlist` または `redis`（[クラスタリングと高可用性](#クラスタリングと高可用性)を参照） |
 | `--peer-domain`                | *(空)*     | *(memberlist)* memberlist クラスター探索用のピアドメイン名                               |
 | `--memberlist-port`            | `7946`     | *(memberlist)* memberlist ゴシッププロトコル用ポート                                     |
@@ -214,15 +215,23 @@ memberlist バックエンドは、レプリカ同士が直接通信できるこ
 **設定例:**
 
 ```bash
+# パスワードがプロセス一覧に表示されないよう、URL は環境変数で渡します。
+export WOW_REDIS_URL=rediss://user:password@redis.example.com:6379/0
 webhook-over-websocket server \
   --port 8080 \
-  --cluster-backend redis \
-  --redis-url rediss://user:password@redis.example.com:6379/0
+  --cluster-backend redis
 ```
 
 - TLS を使う場合は `rediss://`（または `--redis-tls-ca-file`）を指定します。通信の暗号化が有効なマネージド Redis サービスは `rediss://` のままで接続できます。
 - Redis がクラスターモードで動作している場合は `--redis-cluster-mode` を指定します。
 - Redis バックエンドでは `/traefik-config` と `/internal/channels` は提供されません。
+
+**セキュリティ:** Redis は信頼境界になります。レプリカ間のメッセージはアプリケーション側で署名も暗号化もしていないため、これらのチャンネルを購読・発行できる主体は、中継される Webhook や `/auth/callback` のセッショントークンを読み取れ、接続中のクライアントへリクエストを注入できます。
+
+- 専用の Redis を使うか、プレフィックス（`~<prefix>:* &<prefix>:*`）と使用するコマンドに限定した Redis ACL ユーザーを使ってください。
+- 通信の暗号化には `rediss://` を使ってください。
+- デプロイごとに固有の `--redis-key-prefix` を指定してください。同じ Redis を同じプレフィックスで共有すると、デプロイ同士が干渉します。
+- 中継される Webhook のサイズはリクエストボディ（最大 `--webhook-max-body-size`）と同程度になります。Redis の Pub/Sub 用 `client-output-buffer-limit` はこれより十分大きくしてください。超えると Redis がそのレプリカの購読を切断し、再購読するまでそのレプリカの全チャンネル宛てのメッセージが失われます。
 
 **制約:** Redis Pub/Sub の配送は最大 1 回です。Webhook の処理中に WebSocket を持つレプリカが停止した場合、呼び出し元には `504 Gateway Timeout` が返ります。
 

@@ -159,14 +159,7 @@ func (r *Redis) UnclaimChannel(ctx context.Context, channelID string) error {
 	delete(r.owned, channelID)
 	r.ownedMu.Unlock()
 
-	owner, err := r.client.Get(ctx, r.ownerKey(channelID)).Result()
-	if errors.Is(err, redis.Nil) || (err == nil && owner != r.nodeID) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("failed to unclaim channel: %w", err)
-	}
-	if err := r.client.Del(ctx, r.ownerKey(channelID)).Err(); err != nil {
+	if _, err := r.deleteOwnerIfOwned(ctx, channelID); err != nil {
 		return fmt.Errorf("failed to unclaim channel: %w", err)
 	}
 	return nil
@@ -177,21 +170,43 @@ func (r *Redis) ReleaseChannel(ctx context.Context, channelID string) error {
 	delete(r.owned, channelID)
 	r.ownedMu.Unlock()
 
-	owner, err := r.client.Get(ctx, r.ownerKey(channelID)).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	deleted, err := r.deleteOwnerIfOwned(ctx, channelID)
+	if err != nil {
 		return fmt.Errorf("failed to release channel: %w", err)
 	}
-	if owner != "" && owner != r.nodeID {
+	if !deleted {
 		// The channel has been taken over by another node.
 		return nil
 	}
-	// NOTE: The keys are deleted one by one because they may live in different cluster slots.
-	for _, key := range []string{r.ownerKey(channelID), r.channelKey(channelID)} {
-		if err := r.client.Del(ctx, key).Err(); err != nil {
-			return fmt.Errorf("failed to release channel: %w", err)
-		}
+	// NOTE: The channel key is deleted separately because it may live in another cluster slot.
+	if err := r.client.Del(ctx, r.channelKey(channelID)).Err(); err != nil {
+		return fmt.Errorf("failed to release channel: %w", err)
 	}
 	return nil
+}
+
+// deleteOwnerScript deletes the ownership only if it is held by this node (ARGV[1]).
+// It returns 0 if another node holds it, and 1 otherwise.
+const deleteOwnerScript = `
+local owner = redis.call("GET", KEYS[1])
+if not owner then
+	return 1
+end
+if owner == ARGV[1] then
+	redis.call("DEL", KEYS[1])
+	return 1
+end
+return 0
+`
+
+// deleteOwnerIfOwned atomically deletes the ownership of the channel unless another node holds it.
+// It returns false if another node holds it.
+func (r *Redis) deleteOwnerIfOwned(ctx context.Context, channelID string) (bool, error) {
+	n, err := r.client.Eval(ctx, deleteOwnerScript, []string{r.ownerKey(channelID)}, r.nodeID).Int()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 func (r *Redis) ForwardRequest(ctx context.Context, channelID string, data []byte) error {

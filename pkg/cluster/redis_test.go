@@ -321,3 +321,43 @@ func TestRedisHeartbeatDoesNotTakeOverAnotherOwner(t *testing.T) {
 	require.NoError(t, node1.heartbeat(ctx))
 	assert.ErrorIs(t, node1.ClaimChannel(ctx, testChannelID), ErrChannelInUse, "node2 must still hold the channel")
 }
+
+func TestRedisReleaseChannelOwnedByAnotherNode(t *testing.T) {
+	mr := miniredis.RunT(t)
+	node1 := newTestRedis(t, mr)
+	node2 := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, node1.RegisterChannel(ctx, testChannelID, ""))
+	require.NoError(t, node1.ClaimChannel(ctx, testChannelID))
+	require.NoError(t, node2.ReleaseChannel(ctx, testChannelID))
+
+	_, err := node2.LookupChannel(ctx, testChannelID)
+	require.NoError(t, err, "the channel held by node1 must stay registered")
+	assert.ErrorIs(t, node2.ClaimChannel(ctx, testChannelID), ErrChannelInUse, "node1 must still hold the channel")
+}
+
+func TestRedisDeleteOwnerIfOwnedIsCompareAndDelete(t *testing.T) {
+	mr := miniredis.RunT(t)
+	node1 := newTestRedis(t, mr)
+	node2 := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, node1.RegisterChannel(ctx, testChannelID, ""))
+	require.NoError(t, node1.ClaimChannel(ctx, testChannelID))
+
+	deleted, err := node2.deleteOwnerIfOwned(ctx, testChannelID)
+	require.NoError(t, err)
+	assert.False(t, deleted, "another node's ownership must not be deleted")
+	assert.True(t, mr.Exists(node1.ownerKey(testChannelID)))
+
+	deleted, err = node1.deleteOwnerIfOwned(ctx, testChannelID)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+	assert.False(t, mr.Exists(node1.ownerKey(testChannelID)))
+
+	// Nobody holds it: nothing to delete, but the channel is free to remove.
+	deleted, err = node1.deleteOwnerIfOwned(ctx, testChannelID)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+}

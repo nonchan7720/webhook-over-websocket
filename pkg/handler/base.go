@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,7 +24,33 @@ import (
 	"github.com/nonchan7720/webhook-over-websocket/pkg/middlewares"
 )
 
-const webhookResponseTimeout = 30 * time.Second
+const (
+	webhookResponseTimeout = 30 * time.Second
+	// DefaultWebhookMaxBodySize is the default limit of a webhook request body.
+	DefaultWebhookMaxBodySize = 10 << 20
+	// maxChannelIDLength keeps channel IDs well below the size limits of the relay envelope.
+	maxChannelIDLength = 128
+)
+
+// wsWriteTimeout bounds a write to a client, so that a client not reading its socket
+// cannot block the caller (e.g. the loop receiving relayed requests) indefinitely.
+var wsWriteTimeout = 10 * time.Second
+
+// validChannelID reports whether id can be used as a channel ID:
+// 1 to maxChannelIDLength characters of [A-Za-z0-9._-].
+func validChannelID(id string) bool {
+	if id == "" || len(id) > maxChannelIDLength {
+		return false
+	}
+	for _, c := range id {
+		switch {
+		case 'a' <= c && c <= 'z', 'A' <= c && c <= 'Z', '0' <= c && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 type TunnelMessage struct {
 	ReqID   string `json:"req_id"`
@@ -55,6 +82,8 @@ type Options struct {
 	Port int
 	// ServerCtx is canceled when the server shuts down, to notify WebSocket connections.
 	ServerCtx context.Context
+	// WebhookMaxBodySize limits the webhook request body in bytes. DefaultWebhookMaxBodySize is used if 0.
+	WebhookMaxBodySize int64
 
 	AuthEnabled        bool
 	JwtSecret          []byte
@@ -73,6 +102,8 @@ type base struct {
 	waitingClients   sync.Map
 	serverCtx        context.Context
 
+	webhookMaxBodySize int64
+
 	cluster cluster.Cluster
 
 	authEnabled        bool
@@ -83,13 +114,17 @@ type base struct {
 }
 
 func newBase(opts Options, c cluster.Cluster) base {
+	if opts.WebhookMaxBodySize <= 0 {
+		opts.WebhookMaxBodySize = DefaultWebhookMaxBodySize
+	}
 	return base{
 		activeChannels:  make(map[string]*ClientConn),
 		pendingRequests: make(map[string]*pendingRequest),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		serverCtx: opts.ServerCtx,
+		serverCtx:          opts.ServerCtx,
+		webhookMaxBodySize: opts.WebhookMaxBodySize,
 
 		cluster: c,
 
@@ -166,6 +201,9 @@ func (c *ClientConn) send(msg TunnelMessage) error {
 	defer c.mu.Unlock()
 	if c.wsConn == nil {
 		return fmt.Errorf("client is not connected")
+	}
+	if err := c.wsConn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
 	}
 	return c.wsConn.WriteJSON(msg)
 }
@@ -332,9 +370,15 @@ func webhookChannelID(r *http.Request) string {
 // proxyWebhook sends the webhook request with send and writes the response from the client.
 // send returns the HTTP status to respond with when the request could not be sent.
 func (h *base) proxyWebhook(w http.ResponseWriter, r *http.Request, send func(TunnelMessage) (int, error)) {
+	// The webhook endpoint is unauthenticated, so bound the body read into memory (and relayed).
+	r.Body = http.MaxBytesReader(w, r.Body, h.webhookMaxBodySize)
 	// Convert HTTP requests directly into raw byte sequences (equivalent to TCP dumps)
 	rawReqBytes, err := httputil.DumpRequest(r, true)
 	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "Error dumping request", http.StatusInternalServerError)
 		return
 	}

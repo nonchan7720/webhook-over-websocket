@@ -59,3 +59,11 @@ func TestServerValidateClusterBackend(t *testing.T) {
 		})
 	}
 }
+
+func TestServerWebhookMaxBodySize(t *testing.T) {
+	args := parseServerArgs(t)
+	assert.Equal(t, int64(10<<20), args.WebhookMaxBodySize)
+
+	assert.Error(t, parseServerArgs(t, "--webhook-max-body-size", "0").Validate())
+	assert.NoError(t, parseServerArgs(t, "--webhook-max-body-size", "1024").Validate())
+}

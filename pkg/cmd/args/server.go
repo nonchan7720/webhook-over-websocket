@@ -21,6 +21,8 @@ type Server struct {
 	MemberListPort         int           `mapstructure:"memberlist-port"`
 	MemberlistSyncDuration time.Duration `mapstructure:"memberlist-sync-duration"`
 
+	WebhookMaxBodySize int64 `mapstructure:"webhook-max-body-size"`
+
 	ClusterBackend             string        `mapstructure:"cluster-backend"`
 	RedisURL                   string        `mapstructure:"redis-url"`
 	RedisKeyPrefix             string        `mapstructure:"redis-key-prefix"`
@@ -44,6 +46,7 @@ func (args *Server) BindFlags(flag *pflag.FlagSet) {
 	flag.DurationVar(&args.CleanupDuration, "cleanup-duration", 5*time.Minute, "channel_id cleanup duration")
 	flag.IntVar(&args.MemberListPort, "memberlist-port", 7946, "memberlist port(gossip protocol)")
 	flag.DurationVar(&args.MemberlistSyncDuration, "memberlist-sync-duration", 5*time.Second, "channel_id cleanup duration")
+	flag.Int64Var(&args.WebhookMaxBodySize, "webhook-max-body-size", 10<<20, "maximum size of a webhook request body in bytes")
 	flag.StringVar(&args.ClusterBackend, "cluster-backend", ClusterBackendMemberlist, "backend for sharing state between replicas (memberlist|redis)")
 	flag.StringVar(&args.RedisURL, "redis-url", "", "redis connection url (redis://[user:password@]host:port[/db], rediss:// for TLS)")
 	flag.StringVar(&args.RedisKeyPrefix, "redis-key-prefix", "webhook-over-websocket", "prefix of redis keys and pub/sub channel")
@@ -67,6 +70,9 @@ func (args *Server) Validate() error {
 	}
 	if authEnabled && args.JwtSigningKey == "" {
 		err = errors.Join(err, fmt.Errorf("--jwt-signing-key is required when --github-client-id is set"))
+	}
+	if args.WebhookMaxBodySize <= 0 {
+		err = errors.Join(err, fmt.Errorf("--webhook-max-body-size must be positive"))
 	}
 	switch args.ClusterBackend {
 	case ClusterBackendMemberlist:

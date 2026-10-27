@@ -2,9 +2,14 @@ package handler
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
 	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
 	"github.com/stretchr/testify/assert"
@@ -69,4 +74,98 @@ func TestLocalClientDoesNotRaceWithUpgrade(t *testing.T) {
 	_ = h.localClient("ch")
 	h.CleanNonActiveSession()
 	<-done
+}
+
+func TestValidChannelID(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{id: "0b7f6c1e-1d4a-4c2b-9f00-123456789abc", want: true},
+		{id: "my-app_v1.2", want: true},
+		{id: strings.Repeat("a", maxChannelIDLength), want: true},
+		{id: strings.Repeat("a", maxChannelIDLength+1), want: false},
+		{id: "", want: false},
+		{id: "a/b", want: false},
+		{id: "a b", want: false},
+		{id: "a:b", want: false},
+		{id: "日本語", want: false},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, validChannelID(tt.id), "channel id %q", tt.id)
+	}
+}
+
+func TestNewChannelRejectsInvalidChannelID(t *testing.T) {
+	mr := miniredis.RunT(t)
+	servers := map[string]*httptest.Server{
+		"memberlist": httptest.NewServer(newTestServerHandle(nil).BuildMux()),
+		"pubsub":     newPubSubNode(t, mr),
+	}
+	for name, srv := range servers {
+		t.Run(name, func(t *testing.T) {
+			defer srv.Close()
+			resp, err := http.Get(srv.URL + "/new?channel_id=" + url.QueryEscape(strings.Repeat("a", maxChannelIDLength+1)))
+			require.NoError(t, err)
+			_ = resp.Body.Close() //nolint: errcheck
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
+	}
+}
+
+func TestProxyWebhookRejectsTooLargeBody(t *testing.T) {
+	h := newBase(Options{ServerCtx: context.Background(), WebhookMaxBodySize: 8}, nil)
+	sent := false
+	req := httptest.NewRequest(http.MethodPost, "/webhook/ch", strings.NewReader("0123456789"))
+	rec := httptest.NewRecorder()
+	h.proxyWebhook(rec, req, func(TunnelMessage) (int, error) {
+		sent = true
+		return http.StatusBadGateway, nil
+	})
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.False(t, sent, "a too large request must not be forwarded")
+}
+
+func TestNewBaseDefaultsWebhookMaxBodySize(t *testing.T) {
+	h := newBase(Options{ServerCtx: context.Background()}, nil)
+	assert.Equal(t, int64(DefaultWebhookMaxBodySize), h.webhookMaxBodySize)
+}
+
+func TestClientConnSendTimesOutWhenPeerDoesNotRead(t *testing.T) {
+	orig := wsWriteTimeout
+	wsWriteTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { wsWriteTimeout = orig })
+
+	serverConn := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		serverConn <- conn
+	}))
+	t.Cleanup(srv.Close)
+	// The peer connects but never reads.
+	peer, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	require.NoError(t, err)
+	_ = resp.Body.Close()                  //nolint: errcheck
+	t.Cleanup(func() { _ = peer.Close() }) //nolint: errcheck
+
+	client := &ClientConn{wsConn: <-serverConn}
+	payload := make([]byte, 1<<20)
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if err := client.send(TunnelMessage{ReqID: "r", Payload: payload}); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-done:
+		assert.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("send blocked on a peer that does not read")
+	}
 }

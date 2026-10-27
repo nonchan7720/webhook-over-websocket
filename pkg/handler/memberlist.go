@@ -58,6 +58,10 @@ func (h *MemberlistHandler) handleNewChannel(w http.ResponseWriter, r *http.Requ
 	defer h.activeChannelsMu.Unlock()
 	channelID := uuid.New().String()
 	if v := r.URL.Query().Get("channel_id"); v != "" {
+		if !validChannelID(v) {
+			http.Error(w, "Invalid channel_id", http.StatusBadRequest)
+			return
+		}
 		if _, ok := h.activeChannels[v]; ok {
 			http.Error(w, "Channel ID already exists", http.StatusConflict)
 			return
