@@ -1,22 +1,31 @@
 # Project quality gate for feedback-gate.
-# Mirrors .github/workflows/test.yaml (jobs "test" -> make test, "lint" -> golangci-lint)
+# Mirrors .github/workflows/test.yaml (jobs "test" -> make test, "lint" -> golangci-lint, "e2e" -> make e2e)
 # Tools come from mise.toml, so every command goes through `mise exec --`.
 
 rules:
   # Changed Go package: lint + race tests of that package only (scoped version of CI "lint" / "test").
+  # Go changes can break the end-to-end behaviour too, so the e2e suite runs at stop.
   - match: ["**/*.go"]
     per_file_dir: file
     run:
       - parallel:
           - { name: lint-pkg, cmd: "mise exec -- golangci-lint run .", timeout: 180 }
           - { name: test-pkg, cmd: "mise exec -- go test -race .", timeout: 300 }
-    run_checks: [go-all]
+    run_checks: [go-all, e2e]
 
   # Dependency / tool / lint config changes affect the whole module.
   - match: ["go.mod", "go.sum", "mise.toml", ".golangci.yml", "Makefile"]
     run:
       - { name: build, cmd: "mise exec -- go build ./...", files: false, timeout: 180 }
-    run_checks: [go-all]
+    run_checks: [go-all, e2e]
+
+  # E2E runner and Postman collection: quick syntax checks now, the suite itself at stop.
+  - match: ["tests/e2e/run.sh", "tests/e2e/*.json"]
+    run:
+      - parallel:
+          - { name: e2e-sh-syntax, cmd: "bash -n tests/e2e/run.sh", files: false, timeout: 60 }
+          - { name: e2e-json-syntax, cmd: "python3 -m json.tool tests/e2e/webhook-over-websocket.postman_collection.json >/dev/null", files: false, timeout: 60 }
+    run_checks: [e2e]
 
 consistency_checks:
   - name: go-all
@@ -27,3 +36,9 @@ consistency_checks:
       - parallel:
           - { name: test-all, cmd: "mise exec -- make test", files: false }
           - { name: lint-all, cmd: "mise exec -- make lint", files: false }
+
+  # same as CI job "e2e" (make e2e): real server / client processes, Redis in Docker, Postman CLI.
+  - name: e2e
+    timeout: 300
+    run:
+      - { name: e2e, cmd: "mise exec -- make e2e", files: false }
