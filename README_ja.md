@@ -91,7 +91,7 @@ docker run --rm -p 8080:8080 ghcr.io/nonchan7720/webhook-over-websocket:latest s
 | `--github-client-id`           | *(空)*     | GitHub OAuth App のクライアント ID — **設定すると認証が有効になります**                  |
 | `--github-client-secret`       | *(空)*     | GitHub OAuth App のクライアントシークレット（`--github-client-id` 設定時は必須）         |
 | `--github-org`                 | *(空)*     | アクセスを許可する GitHub 組織名（省略時は組織チェックなし）                             |
-| `--jwt-secret`                 | *(空)*     | JWT トークン署名用のシークレットキー（`--github-client-id` 設定時は必須）                |
+| `--jwt-signing-key`            | *(空)*     | JWT トークン署名用のシークレットキー（`--github-client-id` 設定時は必須）                |
 
 ### 2. クライアントを起動する
 

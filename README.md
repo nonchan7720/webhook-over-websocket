@@ -148,7 +148,7 @@ webhook-over-websocket server \
   --github-client-id  <YOUR_CLIENT_ID> \
   --github-client-secret <YOUR_CLIENT_SECRET> \
   --github-org my-organization \
-  --jwt-secret  <A_LONG_RANDOM_STRING>
+  --jwt-signing-key  <A_LONG_RANDOM_STRING>
 ```
 
 ### New server endpoints (auth mode only)
