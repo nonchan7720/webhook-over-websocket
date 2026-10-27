@@ -10,6 +10,8 @@ var (
 	ErrChannelNotFound = errors.New("channel not found")
 	// ErrChannelInUse is returned when another node already holds the WebSocket of the channel.
 	ErrChannelInUse = errors.New("channel is already in use")
+	// ErrChannelExists is returned when the channel ID has already been issued.
+	ErrChannelExists = errors.New("channel already exists")
 )
 
 type Cluster interface {
@@ -40,6 +42,7 @@ type RelayResponseFn func(data []byte)
 type Relay interface {
 	Cluster
 	// RegisterChannel shares an issued channel so that its WebSocket can connect to any node.
+	// It returns ErrChannelExists if the channel ID has already been issued.
 	RegisterChannel(ctx context.Context, channelID, subject string) error
 	// LookupChannel returns the subject of an issued channel, or ErrChannelNotFound.
 	LookupChannel(ctx context.Context, channelID string) (string, error)

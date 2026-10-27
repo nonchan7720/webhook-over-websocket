@@ -59,19 +59,14 @@ func (h *PubSubHandler) handleNewChannel(w http.ResponseWriter, r *http.Request)
 	}
 	channelID := uuid.New().String()
 	if v := r.URL.Query().Get("channel_id"); v != "" {
-		_, err := h.relay.LookupChannel(r.Context(), v)
-		switch {
-		case err == nil:
-			http.Error(w, "Channel ID already exists", http.StatusConflict)
-			return
-		case !errors.Is(err, cluster.ErrChannelNotFound):
-			slog.ErrorContext(r.Context(), "failed to lookup channel", slog.String("error", err.Error()))
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
 		channelID = v
 	}
+	// RegisterChannel checks and registers atomically, so concurrent requests cannot both get the same ID.
 	if err := h.relay.RegisterChannel(r.Context(), channelID, subject); err != nil {
+		if errors.Is(err, cluster.ErrChannelExists) {
+			http.Error(w, "Channel ID already exists", http.StatusConflict)
+			return
+		}
 		slog.ErrorContext(r.Context(), "failed to register channel", slog.String("error", err.Error()))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -99,11 +94,21 @@ func (h *PubSubHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Forbidden or invalid channel_id", http.StatusForbidden)
 		return
 	}
-	if h.localClient(channelID) != nil {
+	// Reserve the channel on this node first, so that concurrent requests to this node cannot both
+	// pass ClaimChannel (it succeeds again for the node already holding the channel).
+	clientConn := &ClientConn{subject: subject}
+	h.activeChannelsMu.Lock()
+	if _, exists := h.activeChannels[channelID]; exists {
+		h.activeChannelsMu.Unlock()
 		http.Error(w, "Channel is already in use", http.StatusConflict)
 		return
 	}
+	h.activeChannels[channelID] = clientConn
+	h.activeChannelsMu.Unlock()
 	if err := h.relay.ClaimChannel(r.Context(), channelID); err != nil {
+		h.activeChannelsMu.Lock()
+		delete(h.activeChannels, channelID)
+		h.activeChannelsMu.Unlock()
 		switch {
 		case errors.Is(err, cluster.ErrChannelInUse):
 			http.Error(w, "Channel is already in use", http.StatusConflict)
@@ -116,10 +121,6 @@ func (h *PubSubHandler) handleWebSocket(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	clientConn := &ClientConn{subject: subject}
-	h.activeChannelsMu.Lock()
-	h.activeChannels[channelID] = clientConn
-	h.activeChannelsMu.Unlock()
 	conn := h.upgradeWebSocket(w, r, clientConn)
 	if conn == nil {
 		h.activeChannelsMu.Lock()

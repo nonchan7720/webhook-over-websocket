@@ -110,8 +110,12 @@ func (r *Redis) Broadcast(ctx context.Context, msg any) error {
 }
 
 func (r *Redis) RegisterChannel(ctx context.Context, channelID, subject string) error {
-	if err := r.client.Set(ctx, r.channelKey(channelID), subject, redisChannelTTL).Err(); err != nil {
+	ok, err := r.client.SetNX(ctx, r.channelKey(channelID), subject, redisChannelTTL).Result()
+	if err != nil {
 		return fmt.Errorf("failed to register channel: %w", err)
+	}
+	if !ok {
+		return ErrChannelExists
 	}
 	return nil
 }
@@ -213,6 +217,20 @@ func (r *Redis) publish(ctx context.Context, channel string, envelope *redisEnve
 	return nil
 }
 
+// refreshOwnerScript extends the ownership of this node (ARGV[1]) for ARGV[2] milliseconds.
+// It restores the ownership if it has expired (e.g. heartbeats were delayed),
+// but never takes over a channel claimed by another node in the meantime.
+const refreshOwnerScript = `
+local owner = redis.call("GET", KEYS[1])
+if not owner then
+	return redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
+end
+if owner == ARGV[1] then
+	return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`
+
 // heartbeat extends the expiry of the channels held by this node.
 func (r *Redis) heartbeat(ctx context.Context) error {
 	r.ownedMu.Lock()
@@ -226,7 +244,8 @@ func (r *Redis) heartbeat(ctx context.Context) error {
 	}
 	pipe := r.client.Pipeline()
 	for _, id := range channelIDs {
-		pipe.Expire(ctx, r.ownerKey(id), r.ownerTTL())
+		// NOTE: EVAL is used because EVALSHA cannot fall back to EVAL inside a pipeline.
+		pipe.Eval(ctx, refreshOwnerScript, []string{r.ownerKey(id)}, r.nodeID, r.ownerTTL().Milliseconds())
 		pipe.Expire(ctx, r.channelKey(id), redisChannelTTL)
 	}
 	_, err := pipe.Exec(ctx)

@@ -74,6 +74,9 @@ func (args *Server) Validate() error {
 		if args.RedisURL == "" {
 			err = errors.Join(err, fmt.Errorf("--redis-url is required when --cluster-backend is %s", ClusterBackendRedis))
 		}
+		if args.RedisHeartbeatDuration <= 0 {
+			err = errors.Join(err, fmt.Errorf("--redis-heartbeat-duration must be positive"))
+		}
 	default:
 		err = errors.Join(err, fmt.Errorf("--cluster-backend must be one of %s, %s", ClusterBackendMemberlist, ClusterBackendRedis))
 	}

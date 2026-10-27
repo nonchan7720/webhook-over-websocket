@@ -251,3 +251,57 @@ func TestPubSubPlainRequestToChannelInUseOnAnotherNodeReturns409(t *testing.T) {
 	_ = resp.Body.Close() //nolint: errcheck
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
 }
+
+// newPubSubHandlerNode is newPubSubNode that also returns the handler, for white-box tests.
+func newPubSubHandlerNode(t *testing.T, mr *miniredis.Miniredis) (*PubSubHandler, *httptest.Server) {
+	t.Helper()
+	relay, err := cluster.NewRedis(cluster.RedisConfig{
+		URL:               "redis://" + mr.Addr(),
+		KeyPrefix:         "test",
+		HeartbeatInterval: time.Second,
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	h := NewPubSubHandler(Options{ServerCtx: ctx}, relay)
+	require.NoError(t, relay.Start(ctx))
+	srv := httptest.NewServer(h.BuildMux())
+	t.Cleanup(srv.Close)
+	return h, srv
+}
+
+func TestPubSubWebSocketRejectsConcurrentConnectOnSameNode(t *testing.T) {
+	mr := miniredis.RunT(t)
+	h, node := newPubSubHandlerNode(t, mr)
+	channelID := issueChannel(t, node)
+
+	// Another /ws request for the same channel is in flight on this node (reserved, not upgraded yet).
+	h.activeChannelsMu.Lock()
+	h.activeChannels[channelID] = &ClientConn{}
+	h.activeChannelsMu.Unlock()
+
+	wsURL := "ws" + strings.TrimPrefix(node.URL, "http") + "/ws/" + channelID
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.Error(t, err)
+	defer resp.Body.Close() //nolint: errcheck
+	assert.Equal(t, http.StatusConflict, resp.StatusCode)
+}
+
+func TestPubSubWebSocketClaimFailureRemovesReservation(t *testing.T) {
+	mr := miniredis.RunT(t)
+	hA, nodeA := newPubSubHandlerNode(t, mr)
+	nodeB := newPubSubNode(t, mr)
+
+	channelID := issueChannel(t, nodeA)
+	connectWebSocket(t, nodeB, channelID)
+
+	resp, err := http.Get(nodeA.URL + "/ws/" + channelID)
+	require.NoError(t, err)
+	_ = resp.Body.Close() //nolint: errcheck
+	require.Equal(t, http.StatusConflict, resp.StatusCode)
+
+	hA.activeChannelsMu.RLock()
+	_, reserved := hA.activeChannels[channelID]
+	hA.activeChannelsMu.RUnlock()
+	assert.False(t, reserved, "the reservation must be removed when the claim fails")
+}

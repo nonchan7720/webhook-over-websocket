@@ -58,7 +58,7 @@ type Options struct {
 type base struct {
 	activeChannels   map[string]*ClientConn
 	activeChannelsMu sync.RWMutex
-	pendingRequests  map[string]chan TunnelMessage
+	pendingRequests  map[string]*pendingRequest
 	pendingMu        sync.RWMutex
 	upgrader         websocket.Upgrader
 	waitingClients   sync.Map
@@ -76,7 +76,7 @@ type base struct {
 func newBase(opts Options, c cluster.Cluster) base {
 	return base{
 		activeChannels:  make(map[string]*ClientConn),
-		pendingRequests: make(map[string]chan TunnelMessage),
+		pendingRequests: make(map[string]*pendingRequest),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -273,16 +273,46 @@ func (h *base) serveWebSocket(channelID string, clientConn *ClientConn, conn *we
 	}
 }
 
+// pendingRequest is a webhook request waiting for the response from the client.
+type pendingRequest struct {
+	ch   chan TunnelMessage
+	done chan struct{}
+	once sync.Once
+}
+
+func newPendingRequest() *pendingRequest {
+	return &pendingRequest{
+		ch:   make(chan TunnelMessage, 32),
+		done: make(chan struct{}),
+	}
+}
+
+// deliver passes msg to the waiting handler. It returns false without blocking
+// once the handler has returned (e.g. timed out), so a late response never stalls the caller.
+func (p *pendingRequest) deliver(msg TunnelMessage) bool {
+	select {
+	case p.ch <- msg:
+		return true
+	case <-p.done:
+		return false
+	}
+}
+
+// finish tells the senders that nobody receives the response any more.
+func (p *pendingRequest) finish() {
+	p.once.Do(func() { close(p.done) })
+}
+
 // deliverResponse passes a response from the client to the handler waiting for the ReqID.
 // It returns false when no handler on this node is waiting for it.
 func (h *base) deliverResponse(msg TunnelMessage) bool {
 	h.pendingMu.RLock()
-	respCh, exists := h.pendingRequests[msg.ReqID]
+	pending, exists := h.pendingRequests[msg.ReqID]
 	h.pendingMu.RUnlock()
-	if exists {
-		respCh <- msg
+	if !exists {
+		return false
 	}
-	return exists
+	return pending.deliver(msg)
 }
 
 func webhookChannelID(r *http.Request) string {
@@ -300,13 +330,15 @@ func (h *base) proxyWebhook(w http.ResponseWriter, r *http.Request, send func(Tu
 	}
 
 	reqID := uuid.New().String()
-	respCh := make(chan TunnelMessage, 32)
+	pending := newPendingRequest()
+	respCh := pending.ch
 
 	h.pendingMu.Lock()
-	h.pendingRequests[reqID] = respCh
+	h.pendingRequests[reqID] = pending
 	h.pendingMu.Unlock()
 
 	defer func() {
+		pending.finish()
 		h.pendingMu.Lock()
 		delete(h.pendingRequests, reqID)
 		h.pendingMu.Unlock()
@@ -377,7 +409,8 @@ func (h *base) handleWaitHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a channel to receive tokens and register it in the map.
-	tokenChan := make(chan string)
+	// It is buffered so that the sender never blocks even if this handler has already returned.
+	tokenChan := make(chan string, 1)
 	h.waitingClients.Store(sessionID, tokenChan)
 	defer h.waitingClients.Delete(sessionID)
 
@@ -482,9 +515,7 @@ func (h *base) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if err := h.cluster.Broadcast(r.Context(), msg); err != nil {
 		slog.ErrorContext(r.Context(), "failed to broadcast auth message", slog.String("error", err.Error()))
 	}
-	if ch, ok := h.waitingClients.Load(sessionID); ok {
-		ch.(chan string) <- sessionToken //nolint: errcheck,forcetypeassert
-	}
+	h.sendToken(sessionID, sessionToken)
 	w.Header().Add("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`Login complete. <br />Please close your browser.`)) //nolint: errcheck,gosec
@@ -510,6 +541,23 @@ func (h *base) CleanNonActiveSession() {
 	}
 }
 
+// sendToken passes the token to the CLI waiting on this node for the session, if any.
+// It never blocks: the CLI may have disconnected, or the token may have already been delivered.
+func (h *base) sendToken(sessionID, token string) {
+	ch, ok := h.waitingClients.Load(sessionID)
+	if !ok {
+		return
+	}
+	c, ok := ch.(chan string)
+	if !ok {
+		return
+	}
+	select {
+	case c <- token:
+	default:
+	}
+}
+
 func (h *base) notifyMsg(notifyMsg *cluster.NotifyMsg) {
 	switch notifyMsg.MsgType {
 	case cluster.NotifyMsgType_AuthMessage:
@@ -518,11 +566,7 @@ func (h *base) notifyMsg(notifyMsg *cluster.NotifyMsg) {
 			slog.Error(err.Error())
 			return
 		}
-		if ch, ok := h.waitingClients.Load(msg.SessionID); ok {
-			if c, ok := ch.(chan string); ok {
-				c <- msg.Token
-			}
-		}
+		h.sendToken(msg.SessionID, msg.Token)
 	}
 }
 

@@ -276,3 +276,48 @@ func TestRedisUnclaimChannelOwnedByAnotherNode(t *testing.T) {
 	require.NoError(t, node2.UnclaimChannel(ctx, testChannelID))
 	assert.ErrorIs(t, node2.ClaimChannel(ctx, testChannelID), ErrChannelInUse, "node1 must still hold the channel")
 }
+
+func TestRedisRegisterChannelTwiceReturnsErrChannelExists(t *testing.T) {
+	mr := miniredis.RunT(t)
+	node1 := newTestRedis(t, mr)
+	node2 := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, node1.RegisterChannel(ctx, testChannelID, "user-1"))
+	assert.ErrorIs(t, node2.RegisterChannel(ctx, testChannelID, "user-2"), ErrChannelExists)
+	subject, err := node1.LookupChannel(ctx, testChannelID)
+	require.NoError(t, err)
+	assert.Equal(t, "user-1", subject, "the first registration must be kept")
+}
+
+func TestRedisHeartbeatRestoresExpiredOwnership(t *testing.T) {
+	mr := miniredis.RunT(t)
+	r := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, r.RegisterChannel(ctx, testChannelID, ""))
+	require.NoError(t, r.ClaimChannel(ctx, testChannelID))
+	// The heartbeat was late (e.g. a long GC pause) and the ownership expired.
+	mr.FastForward(time.Minute)
+	require.ErrorIs(t, r.ForwardRequest(ctx, testChannelID, []byte(`{}`)), ErrChannelNotFound)
+
+	require.NoError(t, r.heartbeat(ctx))
+	assert.NoError(t, r.ForwardRequest(ctx, testChannelID, []byte(`{}`)), "the heartbeat must restore the ownership")
+}
+
+func TestRedisHeartbeatDoesNotTakeOverAnotherOwner(t *testing.T) {
+	mr := miniredis.RunT(t)
+	node1 := newTestRedis(t, mr)
+	node2 := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	require.NoError(t, node1.RegisterChannel(ctx, testChannelID, ""))
+	require.NoError(t, node1.ClaimChannel(ctx, testChannelID))
+	mr.FastForward(time.Minute)
+	require.NoError(t, node1.RegisterChannel(ctx, "other-channel", ""), "keep redis alive")
+	mr.Set(node1.channelKey(testChannelID), "")
+	require.NoError(t, node2.ClaimChannel(ctx, testChannelID))
+
+	require.NoError(t, node1.heartbeat(ctx))
+	assert.ErrorIs(t, node1.ClaimChannel(ctx, testChannelID), ErrChannelInUse, "node2 must still hold the channel")
+}

@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const flagClusterBackend = "--cluster-backend"
+const (
+	flagClusterBackend = "--cluster-backend"
+	flagRedisURL       = "--redis-url"
+)
 
 func parseServerArgs(t *testing.T, flags ...string) *Server {
 	t.Helper()
@@ -32,12 +35,17 @@ func TestServerValidateClusterBackend(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "memberlist", flags: []string{flagClusterBackend, ClusterBackendMemberlist}},
-		{name: "redis with url", flags: []string{flagClusterBackend, ClusterBackendRedis, "--redis-url", "rediss://example.com:6379"}},
+		{name: "redis with url", flags: []string{flagClusterBackend, ClusterBackendRedis, flagRedisURL, "rediss://example.com:6379"}},
 		{name: "redis without url", flags: []string{flagClusterBackend, ClusterBackendRedis}, wantErr: true},
 		{name: "unknown backend", flags: []string{flagClusterBackend, "etcd"}, wantErr: true},
 		{
+			name:    "redis with non-positive heartbeat",
+			flags:   []string{flagClusterBackend, ClusterBackendRedis, flagRedisURL, "redis://example.com:6379", "--redis-heartbeat-duration", "0s"},
+			wantErr: true,
+		},
+		{
 			name:  "redis with tls options",
-			flags: []string{flagClusterBackend, ClusterBackendRedis, "--redis-url", "redis://example.com:6379", "--redis-tls-ca-file", "/etc/ca.pem", "--redis-cluster-mode"},
+			flags: []string{flagClusterBackend, ClusterBackendRedis, flagRedisURL, "redis://example.com:6379", "--redis-tls-ca-file", "/etc/ca.pem", "--redis-cluster-mode"},
 		},
 	}
 	for _, tt := range tests {
