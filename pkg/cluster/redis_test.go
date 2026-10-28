@@ -385,3 +385,22 @@ func TestRedisRegisterChannelWithEmptySubjectTwiceReturnsErrChannelExists(t *tes
 	require.NoError(t, r.RegisterChannel(ctx, testChannelID, ""))
 	assert.ErrorIs(t, r.RegisterChannel(ctx, testChannelID, ""), ErrChannelExists, "an anonymous channel cannot be claimed by anyone")
 }
+
+func TestRedisChannelHolder(t *testing.T) {
+	mr := miniredis.RunT(t)
+	node1 := newTestRedis(t, mr)
+	node2 := newTestRedis(t, mr)
+	ctx := context.Background()
+
+	_, err := node2.ChannelHolder(ctx, testChannelID)
+	assert.ErrorIs(t, err, ErrChannelNotFound, "an unissued channel has no holder")
+
+	require.NoError(t, node1.RegisterChannel(ctx, testChannelID, ""))
+	_, err = node2.ChannelHolder(ctx, testChannelID)
+	assert.ErrorIs(t, err, ErrChannelNotFound, "an issued but unconnected channel has no holder")
+
+	require.NoError(t, node1.ClaimChannel(ctx, testChannelID))
+	holder, err := node2.ChannelHolder(ctx, testChannelID)
+	require.NoError(t, err)
+	assert.Equal(t, node1.nodeID, holder)
+}

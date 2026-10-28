@@ -305,3 +305,44 @@ func TestPubSubWebSocketClaimFailureRemovesReservation(t *testing.T) {
 	hA.activeChannelsMu.RUnlock()
 	assert.False(t, reserved, "the reservation must be removed when the claim fails")
 }
+
+// readRecorder records whether the request body was read.
+type readRecorder struct {
+	read bool
+}
+
+func (r *readRecorder) Read(p []byte) (int, error) {
+	r.read = true
+	return 0, io.EOF
+}
+
+func TestPubSubWebhookForUnknownChannelDoesNotReadBody(t *testing.T) {
+	mr := miniredis.RunT(t)
+	h, _ := newPubSubHandlerNode(t, mr)
+
+	for _, path := range []string{"/webhook/unknown", "/webhook/" + strings.Repeat("a", maxChannelIDLength+1), "/webhook/a:b"} {
+		body := &readRecorder{}
+		req := httptest.NewRequest(http.MethodPost, path, body)
+		rec := httptest.NewRecorder()
+		h.handleWebhook(rec, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code, path)
+		assert.Equal(t, "Client not connected\n", rec.Body.String(), path)
+		assert.Equal(t, "close", rec.Header().Get("Connection"), "net/http must not drain the unread body before the 404: %s", path)
+		assert.False(t, body.read, "the body of a webhook to an unknown channel must not be read: %s", path)
+	}
+}
+
+func TestPubSubWebhookOnLookupFailureDoesNotReadBody(t *testing.T) {
+	mr := miniredis.RunT(t)
+	h, _ := newPubSubHandlerNode(t, mr)
+	// Every lookup fails once redis is gone.
+	mr.Close()
+
+	body := &readRecorder{}
+	req := httptest.NewRequest(http.MethodPost, "/webhook/unknown", body)
+	rec := httptest.NewRecorder()
+	h.handleWebhook(rec, req)
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, "close", rec.Header().Get("Connection"), "net/http must not drain the unread body before the 502")
+	assert.False(t, body.read, "the body must not be read when the lookup fails")
+}

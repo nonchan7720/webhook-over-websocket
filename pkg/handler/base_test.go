@@ -216,3 +216,21 @@ func TestServeWebSocketKeepsPingingAfterSend(t *testing.T) {
 	}
 	require.NoError(t, cc.send(TunnelMessage{ReqID: "r2", Payload: []byte("hello again")}), "send after pings")
 }
+
+func TestWebhookChannelIDRejectsInvalidID(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/webhook/my-app_v1.2/hooks/github", want: "my-app_v1.2"},
+		{path: "/webhook/" + strings.Repeat("a", maxChannelIDLength), want: strings.Repeat("a", maxChannelIDLength)},
+		{path: "/webhook/" + strings.Repeat("a", maxChannelIDLength+1), want: ""},
+		{path: "/webhook/", want: ""},
+		{path: "/webhook/a%20b", want: ""},
+		{path: "/webhook/a:b", want: ""},
+	}
+	for _, tt := range tests {
+		req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+		assert.Equal(t, tt.want, webhookChannelID(req), tt.path)
+	}
+}
