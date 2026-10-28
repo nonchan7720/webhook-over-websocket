@@ -116,12 +116,12 @@ func (h *MemberlistHandler) handleWebSocket(w http.ResponseWriter, r *http.Reque
 func (h *MemberlistHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	channelID := webhookChannelID(r)
 	if channelID == "" {
-		http.Error(w, "Client not connected", http.StatusNotFound)
+		clientNotConnected(w)
 		return
 	}
 	client := h.localClient(channelID)
 	if client == nil {
-		http.Error(w, "Client not connected", http.StatusNotFound)
+		clientNotConnected(w)
 		return
 	}
 	h.proxyWebhook(w, r, func(msg TunnelMessage) (int, error) {

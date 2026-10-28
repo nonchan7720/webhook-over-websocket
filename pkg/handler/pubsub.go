@@ -169,7 +169,7 @@ func (h *PubSubHandler) onClientMessage(msg TunnelMessage) {
 func (h *PubSubHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	channelID := webhookChannelID(r)
 	if channelID == "" {
-		http.Error(w, "Client not connected", http.StatusNotFound)
+		clientNotConnected(w)
 		return
 	}
 	if client := h.localClient(channelID); client != nil {
@@ -182,7 +182,7 @@ func (h *PubSubHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// the endpoint is unauthenticated, so this keeps the cost of an unknown channel ID at one lookup.
 	if _, err := h.relay.ChannelHolder(r.Context(), channelID); err != nil {
 		if errors.Is(err, cluster.ErrChannelNotFound) {
-			http.Error(w, "Client not connected", http.StatusNotFound)
+			clientNotConnected(w)
 			return
 		}
 		slog.WarnContext(r.Context(), "failed to lookup channel holder", slog.String("error", err.Error()))

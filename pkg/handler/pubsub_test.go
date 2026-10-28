@@ -327,6 +327,7 @@ func TestPubSubWebhookForUnknownChannelDoesNotReadBody(t *testing.T) {
 		h.handleWebhook(rec, req)
 		assert.Equal(t, http.StatusNotFound, rec.Code, path)
 		assert.Equal(t, "Client not connected\n", rec.Body.String(), path)
+		assert.Equal(t, "close", rec.Header().Get("Connection"), "net/http must not drain the unread body before the 404: %s", path)
 		assert.False(t, body.read, "the body of a webhook to an unknown channel must not be read: %s", path)
 	}
 }

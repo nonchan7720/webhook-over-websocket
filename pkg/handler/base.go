@@ -381,6 +381,14 @@ func (h *base) deliverResponse(msg TunnelMessage) bool {
 	return pending.deliver(msg)
 }
 
+// clientNotConnected answers a webhook whose channel nobody holds, before its body is read.
+// Connection: close makes net/http skip draining the unread body (up to 256 KiB) before the
+// response is sent, so the 404 is not delayed by a slow body and nothing more is read from it.
+func clientNotConnected(w http.ResponseWriter) {
+	w.Header().Set("Connection", "close")
+	http.Error(w, "Client not connected", http.StatusNotFound)
+}
+
 // webhookChannelID returns the channel ID of a /webhook/{channel_id}[/...] request, or "" when
 // the path holds no valid channel ID. An ID that does not pass validChannelID can never have been
 // issued, so the handlers answer 404 without looking the channel up.
