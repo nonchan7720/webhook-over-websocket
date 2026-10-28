@@ -186,6 +186,8 @@ func (h *PubSubHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.WarnContext(r.Context(), "failed to lookup channel holder", slog.String("error", err.Error()))
+		// The body is unread here as well, so close the connection for the same reason as clientNotConnected.
+		w.Header().Set("Connection", "close")
 		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		return
 	}

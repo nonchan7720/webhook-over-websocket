@@ -331,3 +331,18 @@ func TestPubSubWebhookForUnknownChannelDoesNotReadBody(t *testing.T) {
 		assert.False(t, body.read, "the body of a webhook to an unknown channel must not be read: %s", path)
 	}
 }
+
+func TestPubSubWebhookOnLookupFailureDoesNotReadBody(t *testing.T) {
+	mr := miniredis.RunT(t)
+	h, _ := newPubSubHandlerNode(t, mr)
+	// Every lookup fails once redis is gone.
+	mr.Close()
+
+	body := &readRecorder{}
+	req := httptest.NewRequest(http.MethodPost, "/webhook/unknown", body)
+	rec := httptest.NewRecorder()
+	h.handleWebhook(rec, req)
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, "close", rec.Header().Get("Connection"), "net/http must not drain the unread body before the 502")
+	assert.False(t, body.read, "the body must not be read when the lookup fails")
+}
