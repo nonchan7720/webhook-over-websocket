@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.2](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.1...v1.10.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* cut the cost of webhooks to unknown channels in Pub/Sub mode ([#106](https://github.com/nonchan7720/webhook-over-websocket/issues/106)) ([1d67929](https://github.com/nonchan7720/webhook-over-websocket/commit/1d679295ebee493df9bb6e4193aa83d538d913a5))
+
 ## [1.10.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.0...v1.10.1) (2026-10-28)
 
 
