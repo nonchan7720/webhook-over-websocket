@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.0...v1.10.1) (2026-10-28)
+
+
+### Miscellaneous
+
+* **deps:** update jdx/mise-action action to v5.2.2 ([#105](https://github.com/nonchan7720/webhook-over-websocket/issues/105)) ([1cda930](https://github.com/nonchan7720/webhook-over-websocket/commit/1cda93099ea54a340656d09af1ad5eddf8fe15fc))
+* **deps:** update module golang.org/x/net to v0.62.0 [security] ([#103](https://github.com/nonchan7720/webhook-over-websocket/issues/103)) ([4f17deb](https://github.com/nonchan7720/webhook-over-websocket/commit/4f17deb8ec2a830840a8e987d31ec72c67edc4ab))
+
 ## [1.10.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.9.1...v1.10.0) (2026-10-27)
 
 
