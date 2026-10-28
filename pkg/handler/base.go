@@ -381,8 +381,15 @@ func (h *base) deliverResponse(msg TunnelMessage) bool {
 	return pending.deliver(msg)
 }
 
+// webhookChannelID returns the channel ID of a /webhook/{channel_id}[/...] request, or "" when
+// the path holds no valid channel ID. An ID that does not pass validChannelID can never have been
+// issued, so the handlers answer 404 without looking the channel up.
 func webhookChannelID(r *http.Request) string {
-	return strings.Split(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/")[0]
+	id := strings.Split(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/")[0]
+	if !validChannelID(id) {
+		return ""
+	}
+	return id
 }
 
 // proxyWebhook sends the webhook request with send and writes the response from the client.
@@ -417,12 +424,14 @@ func (h *base) proxyWebhook(w http.ResponseWriter, r *http.Request, send func(Tu
 	}()
 
 	if status, err := send(TunnelMessage{ReqID: reqID, Payload: rawReqBytes}); err != nil {
-		slog.WarnContext(r.Context(), "failed to send webhook to client", slog.String("error", err.Error()))
 		if status == http.StatusNotFound {
+			// The endpoint is unauthenticated, so a webhook to an unknown channel is not worth a warning.
+			slog.DebugContext(r.Context(), "webhook to a channel nobody holds", slog.String("error", err.Error()))
 			// Same message as when the channel is not connected to this node.
 			http.Error(w, "Client not connected", status)
 			return
 		}
+		slog.WarnContext(r.Context(), "failed to send webhook to client", slog.String("error", err.Error()))
 		http.Error(w, http.StatusText(status), status)
 		return
 	}

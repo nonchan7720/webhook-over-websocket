@@ -178,6 +178,17 @@ func (h *PubSubHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Reject a webhook to a channel nobody holds before its body is read into memory:
+	// the endpoint is unauthenticated, so this keeps the cost of an unknown channel ID at one lookup.
+	if _, err := h.relay.ChannelHolder(r.Context(), channelID); err != nil {
+		if errors.Is(err, cluster.ErrChannelNotFound) {
+			http.Error(w, "Client not connected", http.StatusNotFound)
+			return
+		}
+		slog.WarnContext(r.Context(), "failed to lookup channel holder", slog.String("error", err.Error()))
+		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		return
+	}
 	h.proxyWebhook(w, r, func(msg TunnelMessage) (int, error) {
 		err := h.relay.ForwardRequest(r.Context(), channelID, encodeRelayMessage(msg))
 		if errors.Is(err, cluster.ErrChannelNotFound) {

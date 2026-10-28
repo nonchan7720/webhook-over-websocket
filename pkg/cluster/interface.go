@@ -55,6 +55,9 @@ type Relay interface {
 	UnclaimChannel(ctx context.Context, channelID string) error
 	// ReleaseChannel removes the channel after its WebSocket is disconnected.
 	ReleaseChannel(ctx context.Context, channelID string) error
+	// ChannelHolder returns the ID of the node holding the channel's WebSocket,
+	// or ErrChannelNotFound if no node holds it.
+	ChannelHolder(ctx context.Context, channelID string) (string, error)
 	// ForwardRequest sends data to the node holding the channel's WebSocket.
 	// It returns ErrChannelNotFound if no node holds it.
 	ForwardRequest(ctx context.Context, channelID string, data []byte) error

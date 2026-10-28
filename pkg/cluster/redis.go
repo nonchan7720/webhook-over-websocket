@@ -225,13 +225,21 @@ func (r *Redis) deleteOwnerIfOwned(ctx context.Context, channelID string) (bool,
 	return n == 1, nil
 }
 
-func (r *Redis) ForwardRequest(ctx context.Context, channelID string, data []byte) error {
+func (r *Redis) ChannelHolder(ctx context.Context, channelID string) (string, error) {
 	owner, err := r.client.Get(ctx, r.ownerKey(channelID)).Result()
 	if errors.Is(err, redis.Nil) {
-		return ErrChannelNotFound
+		return "", ErrChannelNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("failed to lookup channel owner: %w", err)
+		return "", fmt.Errorf("failed to lookup channel owner: %w", err)
+	}
+	return owner, nil
+}
+
+func (r *Redis) ForwardRequest(ctx context.Context, channelID string, data []byte) error {
+	owner, err := r.ChannelHolder(ctx, channelID)
+	if err != nil {
+		return err
 	}
 	return r.publish(ctx, r.inboxChannel(owner), &redisEnvelope{Kind: envelopeKindRequest, Channel: channelID, Data: data})
 }
