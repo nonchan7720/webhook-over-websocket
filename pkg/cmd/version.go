@@ -1,5 +1,5 @@
 package cmd
 
 var (
-	Version = "1.10.2" // x-release-please-version
+	Version = "1.10.3" // x-release-please-version
 )
