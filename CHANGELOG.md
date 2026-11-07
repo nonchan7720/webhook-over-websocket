@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.10.3](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.2...v1.10.3) (2026-11-07)
+
+
+### Miscellaneous
+
+* **deps:** update actions/create-github-app-token action to v3 ([#72](https://github.com/nonchan7720/webhook-over-websocket/issues/72)) ([0ffc074](https://github.com/nonchan7720/webhook-over-websocket/commit/0ffc074a4a7115e48649f1c4beadf144b8ee5986))
+* **deps:** update docker/login-action action to v4.7.0 ([#108](https://github.com/nonchan7720/webhook-over-websocket/issues/108)) ([82e416e](https://github.com/nonchan7720/webhook-over-websocket/commit/82e416e95899a55a56573ae6677c9b5b52dc472c))
+* **deps:** update golang:1.27.3-alpine docker digest to d200d2d ([#112](https://github.com/nonchan7720/webhook-over-websocket/issues/112)) ([2b07393](https://github.com/nonchan7720/webhook-over-websocket/commit/2b073931091343ad5fb55df08c9dc15349a02795))
+* **deps:** update jdx/mise-action action to v5.2.3 ([#109](https://github.com/nonchan7720/webhook-over-websocket/issues/109)) ([fe113a9](https://github.com/nonchan7720/webhook-over-websocket/commit/fe113a9b286d1162a50fe3c3eecc82b0bb3b55f4))
+* **deps:** update jdx/mise-action action to v5.2.4 ([#114](https://github.com/nonchan7720/webhook-over-websocket/issues/114)) ([66e3481](https://github.com/nonchan7720/webhook-over-websocket/commit/66e34819f7bf96347837906d33d866c59ff60162))
+* **deps:** update jdx/mise-action action to v5.2.5 ([#117](https://github.com/nonchan7720/webhook-over-websocket/issues/117)) ([8973b47](https://github.com/nonchan7720/webhook-over-websocket/commit/8973b4775d57061bc94bd3de954640aa93262018))
+* **deps:** update node.js to v26 ([#115](https://github.com/nonchan7720/webhook-over-websocket/issues/115)) ([8c57f97](https://github.com/nonchan7720/webhook-over-websocket/commit/8c57f97d4061592251cfcbd2b28d2d72695e98a2))
+
 ## [1.10.2](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.1...v1.10.2) (2026-10-28)
 
 
