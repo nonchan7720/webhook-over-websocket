@@ -15,7 +15,7 @@ services:
     deploy:
       replicas: 3
   traefik:
-    image: traefik:v3.6.8@sha256:90099f8948c828ecf0ababd711a4359a2443eba12261c1df2f548a3b1d815938
+    image: traefik:v3.7.18@sha256:9c437ac4f09ce6f4980a8544902d3475fdf70a1a7c578729581d2535dfa7d635
     command:
       - --configFile
       - /etc/traefik/config/static.yaml

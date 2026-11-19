@@ -1,65 +1,45 @@
 package cmd
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"context"
 	"testing"
+	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/cluster"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/cmd/args"
+	"github.com/nonchan7720/webhook-over-websocket/pkg/handler"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// newTestServerHandle builds a minimal serverHandle (auth disabled) with the maps
-// that buildMux's registered handlers rely on initialized.
-func newTestServerHandle() *serverHandle {
-	return &serverHandle{
-		activeChannels:  make(map[string]*ClientConn),
-		pendingRequests: make(map[string]chan TunnelMessage),
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
-		authEnabled: false,
-	}
+func TestNewServerMemberlist(t *testing.T) {
+	c, h, err := newServer(context.Background(), &args.Server{
+		Port:                   8080,
+		ClusterBackend:         args.ClusterBackendMemberlist,
+		MemberListPort:         0,
+		MemberlistSyncDuration: time.Second,
+	}, "127.0.0.1")
+	require.NoError(t, err)
+	assert.IsType(t, &cluster.Memberlist{}, c)
+	assert.IsType(t, &handler.MemberlistHandler{}, h)
 }
 
-func TestWebhookRouteAllowsAllHTTPMethods(t *testing.T) {
-	h := newTestServerHandle()
-	mux := h.buildMux()
-
-	methods := []string{
-		http.MethodGet,
-		http.MethodPost,
-		http.MethodPut,
-		http.MethodPatch,
-		http.MethodDelete,
-		http.MethodHead,
-		http.MethodOptions,
-	}
-
-	for _, method := range methods {
-		t.Run(method, func(t *testing.T) {
-			req := httptest.NewRequest(method, "/webhook/some-channel-id/any/nested/path", nil)
-			rec := httptest.NewRecorder()
-
-			mux.ServeHTTP(rec, req)
-
-			// No client is connected for "some-channel-id", so the handler should
-			// report 404, never 405 Method Not Allowed.
-			assert.NotEqual(t, http.StatusMethodNotAllowed, rec.Code)
-			assert.Equal(t, http.StatusNotFound, rec.Code)
-		})
-	}
+func TestNewServerRedis(t *testing.T) {
+	c, h, err := newServer(context.Background(), &args.Server{
+		Port:                   8080,
+		ClusterBackend:         args.ClusterBackendRedis,
+		RedisURL:               "rediss://example.com:6379",
+		RedisHeartbeatDuration: time.Second,
+	}, "127.0.0.1")
+	require.NoError(t, err)
+	assert.IsType(t, &cluster.Redis{}, c)
+	assert.IsType(t, &handler.PubSubHandler{}, h)
 }
 
-func TestWebhookRouteMissingChannelIDReturns404(t *testing.T) {
-	h := newTestServerHandle()
-	mux := h.buildMux()
-
-	req := httptest.NewRequest(http.MethodPost, "/webhook/", nil)
-	rec := httptest.NewRecorder()
-
-	assert.NotPanics(t, func() {
-		mux.ServeHTTP(rec, req)
-	})
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+func TestNewServerRedisInvalidURL(t *testing.T) {
+	_, _, err := newServer(context.Background(), &args.Server{
+		ClusterBackend: args.ClusterBackendRedis,
+		RedisURL:       "://invalid",
+	}, "127.0.0.1")
+	assert.Error(t, err)
 }

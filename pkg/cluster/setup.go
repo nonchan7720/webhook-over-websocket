@@ -4,19 +4,35 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/memberlist"
 )
 
-func Config(port int, myIP string) *memberlist.Config {
+type MemberlistConfig struct {
+	// NodeName defaults to $HOSTNAME (or a random name when unset).
+	NodeName string
+	// BindPort is the gossip protocol port.
+	BindPort int
+	MyIP     string
+	// ServerPort is the HTTP port of the server, used to build peer addresses.
+	ServerPort int
+	PeerDomain string
+	// SyncDuration is the interval for retrying to join peers resolved from PeerDomain.
+	SyncDuration time.Duration
+}
+
+func Config(nodeName string, port int, myIP string) *memberlist.Config {
 	const localhost = "127.0.0.1"
 	mConfig := memberlist.DefaultLANConfig()
-	hostname := os.Getenv("HOSTNAME")
-	if hostname == "" {
-		hostname = "node-" + uuid.New().String()[:8]
+	if nodeName == "" {
+		nodeName = os.Getenv("HOSTNAME")
 	}
-	mConfig.Name = hostname
+	if nodeName == "" {
+		nodeName = "node-" + uuid.New().String()[:8]
+	}
+	mConfig.Name = nodeName
 	mConfig.BindPort = port
 	if myIP != localhost {
 		mConfig.BindAddr = myIP
@@ -25,18 +41,24 @@ func Config(port int, myIP string) *memberlist.Config {
 	return mConfig
 }
 
-func SetUp(port int, myIP string, notifyMsgFn NotifyMsgFn) (*Memberlist, error) {
-	mConfig := Config(port, myIP)
+func NewMemberlist(cfg MemberlistConfig) (*Memberlist, error) {
+	mConfig := Config(cfg.NodeName, cfg.BindPort, cfg.MyIP)
+	m := &Memberlist{
+		myIP:         cfg.MyIP,
+		serverPort:   cfg.ServerPort,
+		peerDomain:   cfg.PeerDomain,
+		syncDuration: cfg.SyncDuration,
+		delegate:     &clusterDelegate{},
+	}
+	mConfig.Delegate = m.delegate
 	mlist, err := memberlist.Create(mConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create memberlist: %w", err)
 	}
-	if notifyMsgFn != nil {
-		mConfig.Delegate = &clusterDelegate{CallbackNotifyMsg: notifyMsgFn}
-		broadcastQueue = &memberlist.TransmitLimitedQueue{
-			NumNodes:       func() int { return mlist.NumMembers() },
-			RetransmitMult: mConfig.RetransmitMult,
-		}
+	m.mlist = mlist
+	m.delegate.broadcastQueue = &memberlist.TransmitLimitedQueue{
+		NumNodes:       func() int { return mlist.NumMembers() },
+		RetransmitMult: mConfig.RetransmitMult,
 	}
-	return &Memberlist{mlist: mlist, myIP: myIP}, nil
+	return m, nil
 }

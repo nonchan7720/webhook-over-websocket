@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.10.2](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.1...v1.10.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* cut the cost of webhooks to unknown channels in Pub/Sub mode ([#106](https://github.com/nonchan7720/webhook-over-websocket/issues/106)) ([1d67929](https://github.com/nonchan7720/webhook-over-websocket/commit/1d679295ebee493df9bb6e4193aa83d538d913a5))
+
+## [1.10.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.0...v1.10.1) (2026-10-28)
+
+
+### Miscellaneous
+
+* **deps:** update jdx/mise-action action to v5.2.2 ([#105](https://github.com/nonchan7720/webhook-over-websocket/issues/105)) ([1cda930](https://github.com/nonchan7720/webhook-over-websocket/commit/1cda93099ea54a340656d09af1ad5eddf8fe15fc))
+* **deps:** update module golang.org/x/net to v0.62.0 [security] ([#103](https://github.com/nonchan7720/webhook-over-websocket/issues/103)) ([4f17deb](https://github.com/nonchan7720/webhook-over-websocket/commit/4f17deb8ec2a830840a8e987d31ec72c67edc4ab))
+
+## [1.10.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.9.1...v1.10.0) (2026-10-27)
+
+
+### Features
+
+* let the same machine issue a fixed channel again without login ([#100](https://github.com/nonchan7720/webhook-over-websocket/issues/100)) ([410bfa6](https://github.com/nonchan7720/webhook-over-websocket/commit/410bfa64f98726a40bfaafc36b02ab630918ee31))
+* support Redis Pub/Sub as a cluster backend ([#99](https://github.com/nonchan7720/webhook-over-websocket/issues/99)) ([9d3a553](https://github.com/nonchan7720/webhook-over-websocket/commit/9d3a5534f73ecd60b0c6a743022d70049f66ec04))
+
+## [1.9.1](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.9.0...v1.9.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **deps:** bump Go to 1.27.3 and vulnerable deps, build arm64 natively, add Renovate auto-approve ([#95](https://github.com/nonchan7720/webhook-over-websocket/issues/95)) ([649ae1b](https://github.com/nonchan7720/webhook-over-websocket/commit/649ae1bb86adf60dace447438d5e114eeb463a61))
+* **deps:** update go minor dependencies ([#90](https://github.com/nonchan7720/webhook-over-websocket/issues/90)) ([2554c52](https://github.com/nonchan7720/webhook-over-websocket/commit/2554c523677de34f65f1f37cd81bcfaa8a9ead0a))
+* **lint:** check errCh error and pin tools with mise ([#94](https://github.com/nonchan7720/webhook-over-websocket/issues/94)) ([1c28ba3](https://github.com/nonchan7720/webhook-over-websocket/commit/1c28ba301cea6515b809c9c6cbdd9587e6f35142))
+
+
+### Miscellaneous
+
+* **deps:** pin dependencies ([#88](https://github.com/nonchan7720/webhook-over-websocket/issues/88)) ([cf9d545](https://github.com/nonchan7720/webhook-over-websocket/commit/cf9d545917e878dbffe579237b5ab69a3f089886))
+* **deps:** update actions/configure-pages action to v6 ([#71](https://github.com/nonchan7720/webhook-over-websocket/issues/71)) ([ba20997](https://github.com/nonchan7720/webhook-over-websocket/commit/ba209970905e929bcb7a80044161af272cb789b8))
+* **deps:** update actions/deploy-pages action to v5 ([#75](https://github.com/nonchan7720/webhook-over-websocket/issues/75)) ([3784ef5](https://github.com/nonchan7720/webhook-over-websocket/commit/3784ef5de04994269d175c93ac27811b6d25328b))
+* **deps:** update actions/upload-pages-artifact action to v5 ([#77](https://github.com/nonchan7720/webhook-over-websocket/issues/77)) ([9bcdde3](https://github.com/nonchan7720/webhook-over-websocket/commit/9bcdde3e59ceb48469ec9a7644f5173f8fdd84ea))
+* **deps:** update golang version ([#89](https://github.com/nonchan7720/webhook-over-websocket/issues/89)) ([cc01375](https://github.com/nonchan7720/webhook-over-websocket/commit/cc013751cff400bb4612ba0f1a4c6fdc41f37580))
+* **deps:** update jdx/mise-action action to v5.2.1 ([#96](https://github.com/nonchan7720/webhook-over-websocket/issues/96)) ([660a1b9](https://github.com/nonchan7720/webhook-over-websocket/commit/660a1b9441b3c87f35bd9d55c0896b6536ba4675))
+* **deps:** update traefik docker tag to v3.7.15 ([#97](https://github.com/nonchan7720/webhook-over-websocket/issues/97)) ([fb78ea2](https://github.com/nonchan7720/webhook-over-websocket/commit/fb78ea23ee9168b2034d7e16ced92712ee4edd32))
+
 ## [1.9.0](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.8.0...v1.9.0) (2026-07-28)
 
 

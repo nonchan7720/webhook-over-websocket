@@ -2,20 +2,58 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/hashicorp/memberlist"
 )
 
+var _ PeerCluster = (*Memberlist)(nil)
+
 type Memberlist struct {
-	myIP  string
-	mlist *memberlist.Memberlist
+	myIP         string
+	serverPort   int
+	peerDomain   string
+	syncDuration time.Duration
+	mlist        *memberlist.Memberlist
+	delegate     *clusterDelegate
 }
 
-func (m *Memberlist) Start(ctx context.Context, peerDomain string, tickTime time.Duration) {
-	go startAutoJoin(ctx, m.mlist, peerDomain, m.myIP, tickTime)
+func (m *Memberlist) Start(ctx context.Context) error {
+	go startAutoJoin(ctx, m.mlist, m.peerDomain, m.myIP, m.syncDuration)
+	go func() {
+		<-ctx.Done()
+		if err := m.mlist.Shutdown(); err != nil {
+			slog.Warn("failed to shutdown memberlist", slog.String("error", err.Error()))
+		}
+	}()
+	return nil
+}
+
+func (m *Memberlist) Subscribe(fn NotifyMsgFn) {
+	m.delegate.callbackNotifyMsg = fn
+}
+
+func (m *Memberlist) Broadcast(_ context.Context, msg any) error {
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal broadcast message: %w", err)
+	}
+	m.delegate.broadcastQueue.QueueBroadcast(&broadcaster{msg: msgBytes})
+	return nil
+}
+
+func (m *Memberlist) Peers(_ context.Context) ([]string, error) {
+	nodes := m.ActiveNodesWithoutSelf()
+	peers := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		peers = append(peers, net.JoinHostPort(node.Addr.String(), strconv.Itoa(m.serverPort)))
+	}
+	return peers, nil
 }
 
 func (m *Memberlist) ActiveNodes() []*memberlist.Node {
