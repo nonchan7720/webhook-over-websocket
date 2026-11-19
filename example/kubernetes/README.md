@@ -98,3 +98,5 @@ envFrom:
 
 クラスタに既に Traefik Ingress Controller がある場合は中央構成 (Ingress の Traefik に HTTP Provider を追加) の方がシンプルです。
 そうでなければ、サイドカー構成は追加コンポーネントなしで完結するため扱いやすい選択肢です。
+
+なお、`--cluster-backend redis` (Redis Pub/Sub バックエンド) を使う場合は Traefik も memberlist も不要になり、通常の Service / Ingress だけで動きます。詳しくはリポジトリ直下の README の「Redis Pub/Sub」を参照してください。

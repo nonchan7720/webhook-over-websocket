@@ -10,7 +10,7 @@ resources:
 # イメージタグをリリースバージョンに固定する
 images:
   - name: ghcr.io/nonchan7720/webhook-over-websocket
-    newTag: v1.9.0
+    newTag: v1.10.2
 
 replicas:
   - name: webhook-over-websocket
