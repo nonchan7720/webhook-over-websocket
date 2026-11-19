@@ -229,6 +229,8 @@ providers:
 
 この設定により、Traefik は（Kubernetes サービス経由で）任意のレプリカに問い合わせるだけで、クラスター全体のすべてのチャンネルのルーティング情報を受け取ることができます。
 
+Traefik を各サーバー Pod のサイドカーとして動かす Kubernetes のサンプルは [`example/kubernetes`](example/kubernetes) にあります。
+
 ### Redis Pub/Sub
 
 memberlist バックエンドは、レプリカ同士が直接通信できること（ゴシップと `/internal/channels`）と、Traefik がすべてのレプリカへルーティングできることを前提にしています。複数のクラスターにまたがるアクティブ・アクティブ構成など、それができない環境では Redis バックエンドを使います。レプリカ間の通信はすべて Redis を経由するため、Traefik も memberlist も不要で、通常のロードバランサーがどのレプリカにリクエストを振り分けても動作します。

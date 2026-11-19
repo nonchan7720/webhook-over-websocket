@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://json.schemastore.org/traefik-v3.json
+http:
+  routers:
+    # HTTP Provider が返す /webhook/<id>, /ws/<id> のルーターより低い優先度にして、
+    # それ以外 (/new, /auth/*, /healthz など) をローカルの server に流す。
+    app:
+      rule: PathPrefix(`/`)
+      priority: 1
+      service: app
+  services:
+    app:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:8080

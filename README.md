@@ -236,6 +236,8 @@ providers:
 
 With this setup, Traefik can query any single replica (via the Kubernetes service), and that replica will return routing information for all channels across the entire cluster.
 
+A complete Kubernetes example with Traefik running as a sidecar in each server Pod is available in [`example/kubernetes`](example/kubernetes).
+
 ### Redis Pub/Sub
 
 The memberlist backend requires that the replicas can reach each other directly (gossip and `/internal/channels`) and that Traefik can route to every replica. When that is not possible — for example, replicas running in multiple clusters in an active-active setup — use the Redis backend instead. All traffic between replicas then goes through Redis, and neither Traefik nor memberlist is needed: a plain load balancer can send any request to any replica.
