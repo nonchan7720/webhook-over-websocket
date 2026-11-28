@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://json.schemastore.org/traefik-v3.json
+# Traefik サイドカーの静的設定。
+# 同じ Pod の server コンテナ (127.0.0.1:8080) から /traefik-config をポーリングし、
+# クラスタ全体のルーティング表を受け取る。
+entryPoints:
+  # 外部から受け付けるエントリポイント (Service の targetPort)
+  web:
+    address: ":8000"
+  # ヘルスチェック (/ping) 専用。Service には公開しない
+  traefik:
+    address: ":9000"
+providers:
+  # 同一 Pod 内の server から動的ルーティング設定を取得する。
+  # どのレプリカに問い合わせても memberlist 経由で全レプリカ分が返る。
+  http:
+    endpoint: "http://127.0.0.1:8080/traefik-config"
+    pollInterval: "2s"
+  # /new や /auth/* など、チャンネルに紐付かないパス用のフォールバック
+  file:
+    directory: /etc/traefik/dynamic
+    watch: false
+ping:
+  entryPoint: traefik
+log:
+  level: INFO
+  format: json
+accessLog:
+  format: json
