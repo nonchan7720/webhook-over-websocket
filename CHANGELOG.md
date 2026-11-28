@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.10.3](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.2...v1.10.3) (2026-11-28)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/klauspost/compress to v1.20.4 ([#123](https://github.com/nonchan7720/webhook-over-websocket/issues/123)) ([7ea9f11](https://github.com/nonchan7720/webhook-over-websocket/commit/7ea9f1146f38e285500f56c39d7360b0aede3e2c))
+* **deps:** update module github.com/klauspost/compress to v1.20.5 ([#135](https://github.com/nonchan7720/webhook-over-websocket/issues/135)) ([4f6537b](https://github.com/nonchan7720/webhook-over-websocket/commit/4f6537bc99a59d3ff9494962d3ae2c655fb46ee5))
+* **deps:** update module github.com/spf13/pflag to v1.1.0 ([#121](https://github.com/nonchan7720/webhook-over-websocket/issues/121)) ([e902b1f](https://github.com/nonchan7720/webhook-over-websocket/commit/e902b1f876a140c7058dfe6118e9af8e27d15d6a))
+
+
+### Miscellaneous
+
+* **deps:** update actions/create-github-app-token action to v3 ([#72](https://github.com/nonchan7720/webhook-over-websocket/issues/72)) ([0ffc074](https://github.com/nonchan7720/webhook-over-websocket/commit/0ffc074a4a7115e48649f1c4beadf144b8ee5986))
+* **deps:** update actions/create-github-app-token action to v3.4.0 ([#131](https://github.com/nonchan7720/webhook-over-websocket/issues/131)) ([1c4e3ee](https://github.com/nonchan7720/webhook-over-websocket/commit/1c4e3ee029bb15e8d5bf131652385a941737f95c))
+* **deps:** update actions/setup-go action to v7.1.0 ([#129](https://github.com/nonchan7720/webhook-over-websocket/issues/129)) ([ba15f24](https://github.com/nonchan7720/webhook-over-websocket/commit/ba15f2402e4d2e977afc631467763586c06108de))
+* **deps:** update amannn/action-semantic-pull-request action to v6.1.2 ([#119](https://github.com/nonchan7720/webhook-over-websocket/issues/119)) ([59f527c](https://github.com/nonchan7720/webhook-over-websocket/commit/59f527ce5946026e1681a8065160c58bd432a750))
+* **deps:** update amannn/action-semantic-pull-request action to v6.1.3 ([#134](https://github.com/nonchan7720/webhook-over-websocket/issues/134)) ([4531aa2](https://github.com/nonchan7720/webhook-over-websocket/commit/4531aa2df048a8d0a59e57bddb27f2f8cf7485c5))
+* **deps:** update docker/login-action action to v4.7.0 ([#108](https://github.com/nonchan7720/webhook-over-websocket/issues/108)) ([82e416e](https://github.com/nonchan7720/webhook-over-websocket/commit/82e416e95899a55a56573ae6677c9b5b52dc472c))
+* **deps:** update docker/login-action action to v4.8.0 ([#120](https://github.com/nonchan7720/webhook-over-websocket/issues/120)) ([1079b26](https://github.com/nonchan7720/webhook-over-websocket/commit/1079b266d6fe34da67384adeaa6cb4a5810f2295))
+* **deps:** update golang version to v1.27.4 ([#128](https://github.com/nonchan7720/webhook-over-websocket/issues/128)) ([f23a3d3](https://github.com/nonchan7720/webhook-over-websocket/commit/f23a3d37b62456723a57eca187f61ff0309af728))
+* **deps:** update golang:1.27.3-alpine docker digest to d200d2d ([#112](https://github.com/nonchan7720/webhook-over-websocket/issues/112)) ([2b07393](https://github.com/nonchan7720/webhook-over-websocket/commit/2b073931091343ad5fb55df08c9dc15349a02795))
+* **deps:** update golang:1.27.3-trixie docker digest to c65ecfe ([#116](https://github.com/nonchan7720/webhook-over-websocket/issues/116)) ([c406154](https://github.com/nonchan7720/webhook-over-websocket/commit/c4061549afb1fb420f08793bc802d8d320aa1058))
+* **deps:** update jdx/mise-action action to v5.2.10 ([#130](https://github.com/nonchan7720/webhook-over-websocket/issues/130)) ([1fddcdc](https://github.com/nonchan7720/webhook-over-websocket/commit/1fddcdc3d4e42858bca964ec6ad1dcffe1993207))
+* **deps:** update jdx/mise-action action to v5.2.3 ([#109](https://github.com/nonchan7720/webhook-over-websocket/issues/109)) ([fe113a9](https://github.com/nonchan7720/webhook-over-websocket/commit/fe113a9b286d1162a50fe3c3eecc82b0bb3b55f4))
+* **deps:** update jdx/mise-action action to v5.2.4 ([#114](https://github.com/nonchan7720/webhook-over-websocket/issues/114)) ([66e3481](https://github.com/nonchan7720/webhook-over-websocket/commit/66e34819f7bf96347837906d33d866c59ff60162))
+* **deps:** update jdx/mise-action action to v5.2.5 ([#117](https://github.com/nonchan7720/webhook-over-websocket/issues/117)) ([8973b47](https://github.com/nonchan7720/webhook-over-websocket/commit/8973b4775d57061bc94bd3de954640aa93262018))
+* **deps:** update jdx/mise-action action to v5.2.6 ([#118](https://github.com/nonchan7720/webhook-over-websocket/issues/118)) ([8da6964](https://github.com/nonchan7720/webhook-over-websocket/commit/8da696420da704fb34d3154a5ee4969f6643f3d9))
+* **deps:** update jdx/mise-action action to v5.2.7 ([#122](https://github.com/nonchan7720/webhook-over-websocket/issues/122)) ([058be60](https://github.com/nonchan7720/webhook-over-websocket/commit/058be60068c682161ff5bd5effbaaa2c8e275557))
+* **deps:** update jdx/mise-action action to v5.2.8 ([#126](https://github.com/nonchan7720/webhook-over-websocket/issues/126)) ([4d3f7a5](https://github.com/nonchan7720/webhook-over-websocket/commit/4d3f7a56e3315b637ba3798684b70256239874c1))
+* **deps:** update jdx/mise-action action to v5.2.9 ([#127](https://github.com/nonchan7720/webhook-over-websocket/issues/127)) ([4ccbbb2](https://github.com/nonchan7720/webhook-over-websocket/commit/4ccbbb2a3805118a6b86d5e085f2235a79ea2b51))
+* **deps:** update node.js to v26 ([#115](https://github.com/nonchan7720/webhook-over-websocket/issues/115)) ([8c57f97](https://github.com/nonchan7720/webhook-over-websocket/commit/8c57f97d4061592251cfcbd2b28d2d72695e98a2))
+* **deps:** update node.js to v26.13.1 ([#124](https://github.com/nonchan7720/webhook-over-websocket/issues/124)) ([5f96ff9](https://github.com/nonchan7720/webhook-over-websocket/commit/5f96ff93befd1e35f321a1b5c6ffe91ff18f9687))
+* **deps:** update traefik docker tag to v3.7.17 ([#111](https://github.com/nonchan7720/webhook-over-websocket/issues/111)) ([a6dbfd5](https://github.com/nonchan7720/webhook-over-websocket/commit/a6dbfd57b4415c02b693493d92410d87a4aea3b6))
+* **deps:** update traefik docker tag to v3.7.18 ([#125](https://github.com/nonchan7720/webhook-over-websocket/issues/125)) ([e21e822](https://github.com/nonchan7720/webhook-over-websocket/commit/e21e822742f6d74ab30f4b7f027eeb3c575a47e7))
+* **deps:** update traefik docker tag to v3.7.19 ([#132](https://github.com/nonchan7720/webhook-over-websocket/issues/132)) ([0967c9f](https://github.com/nonchan7720/webhook-over-websocket/commit/0967c9fa1a345db4ae6ecdc4d1508b1dd0440850))
+
 ## [1.10.2](https://github.com/nonchan7720/webhook-over-websocket/compare/v1.10.1...v1.10.2) (2026-10-28)
 
 
